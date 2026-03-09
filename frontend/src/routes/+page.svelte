@@ -29,10 +29,18 @@ let submitError = $state('');
 let isDragging = $state(false);
 
 const viewOptions = [1, 5, 10, 25];
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
 function handleFileSelect(files: FileList | null) {
 if (files && files.length > 0) {
-selectedFile = files[0];
+const file = files[0];
+if (file.size > MAX_FILE_SIZE) {
+submitError = `File is too large (${formatFileSize(file.size)}). Maximum allowed size is 25 MB.`;
+selectedFile = null;
+return;
+}
+submitError = '';
+selectedFile = file;
 }
 }
 
@@ -72,6 +80,18 @@ if (mode === 'text' && !textValue.trim()) {
 }
 if (mode === 'file' && !selectedFile) {
     submitError = 'Please select a file before generating a link.';
+    return;
+}
+if (mode === 'file' && selectedFile && selectedFile.size > MAX_FILE_SIZE) {
+    submitError = `File is too large (${formatFileSize(selectedFile.size)}). Maximum allowed size is 25 MB.`;
+    return;
+}
+if (passwordEnabled && !password.trim()) {
+    submitError = 'Please enter a password or disable password protection.';
+    return;
+}
+if (customViewsEnabled && (customViewsValue < 1 || customViewsValue > 1000 || !Number.isInteger(customViewsValue))) {
+    submitError = 'Custom view count must be a whole number between 1 and 1000.';
     return;
 }
 
@@ -362,7 +382,7 @@ aria-label={passwordVisible ? 'Hide password' : 'Show password'}
 {#if submitError}
 <p class="submit-error" role="alert">{submitError}</p>
 {/if}
-<button type="submit" class="btn-primary" disabled={isLoading || (mode === 'text' ? !textValue.trim() : !selectedFile)}>
+<button type="submit" class="btn-primary" disabled={isLoading || (mode === 'text' ? !textValue.trim() : !selectedFile) || (passwordEnabled && !password.trim())}>
 {#if isLoading}
 <span class="spinner" aria-hidden="true"></span>
 Generating link…
