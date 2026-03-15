@@ -1,4 +1,4 @@
-use leptos::prelude::*;
+use leptos::{prelude::*, server_fn::Bytes};
 
 pub const STYLES: &str = include_str!("styles.css");
 pub const FAVICON: &str = include_str!("favicon.svg");
@@ -15,6 +15,17 @@ enum Mode {
 enum Step {
     Create,
     Success,
+}
+
+enum SecretKind {
+    Text(String),
+    File(Bytes)
+}
+struct SecretPayload {
+    typ:SecretKind,
+    password:Option<String>,
+    views:i32,
+
 }
 
 #[component]
