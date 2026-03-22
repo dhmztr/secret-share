@@ -5,7 +5,7 @@ use aead::{AeadCore,KeyInit,OsRng,Aead};
 use chacha20poly1305::{ChaCha20Poly1305,Key,Nonce};
 
 pub struct Envelope {
-    pub nonce: [u8;12],
+    pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>
 }
 pub fn encrypt(data:&[u8]) -> Result<(Envelope,[u8;32]),String>{
@@ -14,7 +14,7 @@ pub fn encrypt(data:&[u8]) -> Result<(Envelope,[u8;32]),String>{
     let cipher = ChaCha20Poly1305::new(&key);
     let ciphertext = cipher.encrypt(&nonce,data).map_err(|_| "encrypt failed".to_string())?;
     let env = Envelope {
-        nonce: nonce.into(),
+        nonce: nonce.to_vec(),
         ciphertext
     };
     Ok((env,key.into()))

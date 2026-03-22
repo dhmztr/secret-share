@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { version = "0.4.44", features = ["serde"] }
+crypto = { path = "../crypto" }
+sqlx = { version = "0.8.6", features = ["chrono", "postgres", "runtime-tokio", "uuid"] }
+tokio = "1.50.0"
+tokio-postgres = { version = "0.7.16", features = [
+  "with-chrono-0_4",
+  "with-uuid-1",
+] }
+uuid = { version = "1.22.0", features = ["v1"] }
