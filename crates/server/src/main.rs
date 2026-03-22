@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use db::connect;
 use frontend::{App, FAVICON, STYLES};
 use leptos::prelude::*;
 
@@ -51,6 +52,7 @@ async fn health() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    let connection = connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
     let _ = any_spawner::Executor::init_tokio();
     let app = Router::new()
         .route("/health", get(health))
