@@ -13,6 +13,11 @@ pub struct SecretLink {
     burned_at:Option<DateTime<Utc>>,
     created_at:DateTime<Utc>,
 }
+pub enum SecretErrors {
+    ErrorExpired,
+    ErrorFailedToFetch
+
+}
 impl SecretLink {
     pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
         Self {
@@ -71,6 +76,36 @@ match sqlx::query_scalar!(
     }
 
 }
+pub async fn select_secret(conn:sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<(Vec<u8>,Vec<u8>),SecretErrors> {
+    match sqlx::query!(
+    r#"
+    UPDATE secrets
+    SET view_count = view_count + 1
+    WHERE secret_id = $1
+    RETURNING nonce,ciphertext,max_views,view_count,expires_at,burned_at
+    "#,
+    secret_id).fetch_one(&conn).await {
+    Ok(dane) => {
+        if dane.max_views >= dane.view_count && dane.expires_at <= Utc::now() {
+            Ok((dane.nonce,dane.ciphertext))
+        } else {
+            Err(SecretErrors::ErrorExpired)
+            }
+    }
+    Err(e) => Err(SecretErrors::ErrorFailedToFetch)
+}
+
+}
+pub async fn burn_secret(conn:sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<String,SecretErrors> {
+
+    match sqlx::query_scalar!(
+    "UPDATE secrets SET burned_at = $1 WHERE secret_id = $2",Utc::now(),secret_id).fetch_one(&conn).await {
+        Ok(_) =>  Ok(String::from("Ok")),
+        Err(_) => Err(SecretErrors::ErrorFailedToFetch)
+    }
+
+
+}
 
 #[cfg(test)]
 mod tests {
@@ -90,7 +125,12 @@ mod tests {
         let s = SecretLink::new(en,5,Utc::now());
         let ins_res = insert_secret(conn, s).await;
         assert!(ins_res.is_ok())
-
+    }
+    #[tokio::test]
+    pub async fn select_test() {
+        let conn= connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
+        let uuid:Uuid  = Uuid::parse_str("f67c7cb0-ea3d-424f-bbe6-b96f9806bd8b").unwrap();
+        assert!(select_secret(conn, uuid).await.is_ok())
 
     }
 
