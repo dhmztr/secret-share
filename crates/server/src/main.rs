@@ -2,8 +2,11 @@ use axum::{
     Router,
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::IntoResponse,
-    routing::get,
+    routing::{get,post},
 };
+mod apis;
+use apis::*;
+use crypto::Envelope;
 use db::connect;
 use frontend::{App, FAVICON, STYLES};
 use leptos::prelude::*;
@@ -55,6 +58,7 @@ async fn main() {
     let connection = connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
     let _ = any_spawner::Executor::init_tokio();
     let app = Router::new()
+        .route("/encrypt",post())
         .route("/health", get(health))
         .route("/style.css", get(style))
         .route("/favicon.svg", get(favicon))
