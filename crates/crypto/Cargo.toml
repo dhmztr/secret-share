@@ -7,5 +7,6 @@ edition = "2024"
 aead = "0.5.2"
 argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
+serde = { version = "1.0.228", features = ["derive"] }
 sqlx = { version = "0.8.6", features = ["postgres"] }
 uuid = "1.23.0"
