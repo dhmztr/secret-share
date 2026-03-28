@@ -58,11 +58,7 @@ async fn health() -> impl IntoResponse {
 async fn main() {
     let connection = connect("secret_adm","tajnehaslo",5432,"192.168.88.6","secret_share").await.unwrap();
     let _ = any_spawner::Executor::init_tokio();
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/style.css", get(style))
-        .route("/favicon.svg", get(favicon))
-        .fallback(leptos_axum::render_app_to_stream(shell));
+    let app = make_router().await;
 
     let listener = tokio::net::TcpListener::bind(ADDR).await.unwrap();
     println!("Serving on {ADDR}");
