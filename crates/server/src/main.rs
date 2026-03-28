@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse,
     routing::{get,post},
 };
+use sqlx::PgPool;
 mod apis;
 use apis::*;
 use crypto::Envelope;
@@ -58,7 +59,6 @@ async fn main() {
     let connection = connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
     let _ = any_spawner::Executor::init_tokio();
     let app = Router::new()
-        .route("/encrypt",post())
         .route("/health", get(health))
         .route("/style.css", get(style))
         .route("/favicon.svg", get(favicon))
@@ -67,4 +67,22 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(ADDR).await.unwrap();
     println!("Serving on {ADDR}");
     axum::serve(listener, app).await.unwrap();
+}
+
+pub async fn make_router() -> Router {
+    let pool= connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
+    Router::new()
+        // --- API (MVP) ---
+        .route("/api/secrets", post(encrypt_data))
+        .route("/api/secrets/:id/fetch", post(fetch_decrypt))
+        .route("/api/secrets/:id/meta", get(fetch_metadata))
+        .route("/api/secrets/:id/burn", post(burn))
+        // --- misc ---
+        .route("/health", get(health))
+        .route("/style.css", get(style))
+        .route("/favicon.svg", get(favicon))
+        // --- leptos app ---
+        .fallback(leptos_axum::render_app_to_stream(shell))
+        // IMPORTANT: wrzucamy pool do state
+        .with_state(pool)
 }

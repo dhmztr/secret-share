@@ -1,8 +1,8 @@
-use axum::{extract::{Json, Path, Query}, http::StatusCode};
+use axum::{extract::{State,Json, Path, Query}, http::StatusCode};
 use crypto::Envelope;
 use db::{SecretLink, burn_secret, increment_and_return, insert_secret, select_metadata,  select_password };
-use leptos::attr::selected;
 use chrono::{DateTime,Utc};
+use sqlx::PgPool;
 use uuid::Uuid;
 use crypto::authenticate;
 use serde::{Serialize,Deserialize};
@@ -44,31 +44,26 @@ impl From<(Vec<u8>,Vec<u8>)> for Decrypt_data {
         }
 }
 
-
-async fn encrypt_data(conn:&sqlx::Pool<sqlx::Postgres>,Json(req):Json<FetchEncryptReq>) -> Result<Json<Uuid>,(StatusCode,String)> {
+#[axum::debug_handler]
+pub async fn encrypt_data(State(pool): State<PgPool>,Json(req):Json<FetchEncryptReq>) -> Result<Json<Uuid>,(StatusCode,String)> {
     let secret = SecretLink::new(req.env,req.max_views,req.expires_at,req.haslo);
-    let id = insert_secret(conn, secret)
+    let id = insert_secret(&pool, secret)
         .await
         .map_err(|_|
             (StatusCode::INTERNAL_SERVER_ERROR,
             "database error".to_string())
-
-
         )?;
     Ok(Json(id))
-
-
 }
-
-async fn fetch_decrypt(
-    conn: &sqlx::Pool<sqlx::Postgres>,
+pub async fn fetch_decrypt(
+State(pool): State<PgPool>,
     Path(path_data): Path<String>,
     Json(req): Json<FetchDecryptReq>,
 ) -> Result<Json<Decrypt_data>, (StatusCode, String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
 
-    let dbpass_opt:Option<String> = select_password(conn, secret_uuid)
+    let dbpass_opt:Option<String> = select_password(&pool, secret_uuid)
         .await
         .map_err(|e| match e {
             SecretErrors::Expired => (StatusCode::GONE, "data expired".to_string()),
@@ -88,31 +83,33 @@ async fn fetch_decrypt(
             return Err((StatusCode::UNAUTHORIZED, "bad password".to_string()));
         }
     }
-    let (nonce,ciphertext) = increment_and_return(conn, secret_uuid).await.map_err(|e| match e {
+    let (nonce,ciphertext) = increment_and_return(&pool, secret_uuid).await.map_err(|e| match e {
         SecretErrors::ConnectionFailed => (StatusCode::INTERNAL_SERVER_ERROR,"db connection failed".to_string()),
         SecretErrors::Expired => (StatusCode::BAD_REQUEST,"Expired".to_string()),
         _ => unreachable!()
     })?;
     Ok(Json(Decrypt_data { nonce, ciphertext }))
 }
-async fn fetch_metadata(conn:&sqlx::Pool<sqlx::Postgres>, Path(path_data): Path<String> ) -> Result<Json<MetadataResponse>,(StatusCode,String)> {
+pub async fn fetch_metadata(
+    State(pool): State<PgPool>,
+    Path(path_data): Path<String> ) -> Result<Json<MetadataResponse>,(StatusCode,String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
-    let mut data = select_metadata(conn, secret_uuid).await.map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR,"database failed".to_string()))?;
+    let data = select_metadata(&pool, secret_uuid).await.map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR,"database failed".to_string()))?;
 
 
     Ok(Json(MetadataResponse::from(data)))
 
 
 }
-async fn burn(
-    conn: &sqlx::Pool<sqlx::Postgres>,
+pub async fn burn(
+    State(pool): State<PgPool>,
     Path(path_data): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
 
-    burn_secret(conn, secret_uuid)
+    burn_secret(&pool, secret_uuid)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to connect to db".to_string()))?;
 
