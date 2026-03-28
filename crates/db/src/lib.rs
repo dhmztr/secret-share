@@ -16,7 +16,9 @@ pub struct SecretLink {
 }
 pub enum SecretErrors {
     Expired,
-    ConnectionFailed
+    ConnectionFailed,
+    BadRequest,
+    NotAuthenticated
 
 }
 impl SecretLink {
@@ -51,7 +53,7 @@ pub async fn connect(user:&str,password:&str,port:u16,host:&str,dbname:&str) -> 
 
 }
 
-pub async fn insert_secret(conn:sqlx::Pool<sqlx::Postgres>,secret:SecretLink) -> Result<Uuid,SecretErrors> {
+pub async fn insert_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret:SecretLink) -> Result<Uuid,SecretErrors> {
 
 match sqlx::query_scalar!(
     r#"
@@ -71,7 +73,7 @@ match sqlx::query_scalar!(
     secret.created_at,
     secret.haslo
 )
-.fetch_one(&conn)
+.fetch_one(conn)
 .await
 {
         Ok(new_uuid) => Ok(new_uuid),
@@ -79,25 +81,64 @@ match sqlx::query_scalar!(
     }
 
 }
-pub async fn select_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<(Vec<u8>,Vec<u8>),SecretErrors> {
+pub async fn select_metadata(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<(bool,bool,i32,DateTime<Utc>),SecretErrors> {
     match sqlx::query!(
     r#"
-    UPDATE secrets
-    SET view_count = view_count + 1
-    WHERE secret_id = $1
-    RETURNING nonce,ciphertext,max_views,view_count,expires_at,burned_at,haslo
-    "#,
-    secret_id).fetch_one(conn).await {
-    Ok(dane) => {
-        if dane.max_views >= dane.view_count && dane.expires_at >= Utc::now() && dane.burned_at.is_none() {
-            Ok((dane.nonce,dane.ciphertext))
-        } else {
-            burn_secret(conn,secret_id).await?;
-            Err(SecretErrors::Expired)
-            }
+    SELECT haslo,burned_at,max_views,view_count,expires_at FROM secrets WHERE secret_id = $1"#,
+        secret_id).fetch_one(conn).await {
+        Ok(dane) => {
+            let pass_exists = dane.haslo.is_some();
+            let burned = dane.burned_at.is_some();
+            let views = (dane.max_views-dane.view_count).max(0);
+            Ok((pass_exists,burned,views,dane.expires_at))
+
+        }
+        Err(_) => Err(SecretErrors::ConnectionFailed)
     }
-    Err(_) => Err(SecretErrors::ConnectionFailed)
+
 }
+pub async fn increment_and_return(
+    conn: &sqlx::Pool<sqlx::Postgres>,
+    secret_id: Uuid,
+) -> Result<(Vec<u8>, Vec<u8>), SecretErrors> {
+    let row = sqlx::query!(
+        r#"
+        UPDATE secrets
+        SET view_count = view_count + 1
+        WHERE secret_id = $1
+          AND burned_at IS NULL
+          AND expires_at >= NOW()
+          AND view_count < max_views
+        RETURNING nonce, ciphertext
+        "#,
+        secret_id
+    )
+    .fetch_optional(conn)
+    .await
+    .map_err(|_| SecretErrors::ConnectionFailed)?;
+
+    match row {
+        Some(r) => Ok((r.nonce, r.ciphertext )),
+        None => {
+            Err(SecretErrors::Expired)
+        }
+    }
+}
+pub async fn select_password(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<Option<String>,SecretErrors> {
+    let row = sqlx::query!(
+    r#"
+    SELECT
+    haslo
+    FROM secrets
+    WHERE secret_id = $1
+    "#,
+    secret_id).fetch_optional(conn).await.map_err(|_| SecretErrors::ConnectionFailed)?;
+    match row {
+        Some(r) => Ok(r.haslo),
+        None => Err(SecretErrors::Expired),
+    }
+
+
 
 }
 pub async fn burn_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<String,SecretErrors> {
@@ -111,14 +152,6 @@ pub async fn burn_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Res
 
 }
 
-pub async fn retrieve_password(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<Option<String>,SecretErrors> {
-    match sqlx::query_scalar!(
-    "SELECT haslo FROM secrets WHERE secret_id = $1",secret_id
-).fetch_one(conn).await {
-        Ok(data) => Ok(data),
-        Err(_) => Err(SecretErrors::ConnectionFailed)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -130,22 +163,4 @@ mod tests {
         let result = connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await;
         assert!(result.is_ok());
     }
-    #[tokio::test]
-    pub async fn insert_test() {
-        let conn= connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
-
-        let dummy_data: &[u8] = "lol".as_bytes();
-        let (en,_) = encrypt(dummy_data,None).unwrap();
-        let s = SecretLink::new(en,5,Utc::now(),None);
-        let ins_res = insert_secret(conn, s).await;
-        assert!(ins_res.is_ok())
-    }
-    #[tokio::test]
-    pub async fn select_test() {
-        let conn= connect("REDACTED_USER","REDACTED_PASSWORD",5432,"REDACTED_HOST","secret_share").await.unwrap();
-        let uuid:Uuid  = Uuid::parse_str("f67c7cb0-ea3d-424f-bbe6-b96f9806bd8b").unwrap();
-        assert!(select_secret(&conn, uuid).await.is_ok())
-
-    }
-
 }

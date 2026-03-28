@@ -526,6 +526,7 @@ dependencies = [
  "aead",
  "argon2",
  "chacha20poly1305",
+ "serde",
  "sqlx",
  "uuid",
 ]
@@ -2460,6 +2461,7 @@ version = "0.1.0"
 dependencies = [
  "any_spawner",
  "axum",
+ "chrono",
  "crypto",
  "db",
  "frontend",

@@ -1,10 +1,9 @@
 use std::char::ParseCharError;
-
+use serde::{Deserialize,Serialize};
 use aead::{AeadCore,KeyInit,OsRng,Aead};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use chacha20poly1305::{ChaCha20Poly1305,Key,Nonce};
-use uuid::Uuid;
-
+#[derive(Deserialize,Serialize)]
 pub struct Envelope {
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
