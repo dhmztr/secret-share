@@ -48,8 +48,8 @@ pub fn decrypt(key: &[u8], nonce: &[u8],ciphertext:&[u8])  -> Result<Vec<u8>,Str
 }
 
 
-pub fn authenticate(dbpass:String,contestant:String) -> bool{
-    let Ok(parsed) = PasswordHash::new(&dbpass) else {
+pub fn authenticate(dbpass:&str,contestant:&str) -> bool{
+    let Ok(parsed) = PasswordHash::new(dbpass) else {
         return false;
     };
     Argon2::default().verify_password(contestant.as_bytes(), &parsed).is_ok()

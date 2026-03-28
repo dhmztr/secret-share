@@ -89,7 +89,7 @@ pub async fn select_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> R
     "#,
     secret_id).fetch_one(conn).await {
     Ok(dane) => {
-        if dane.max_views >= dane.view_count && dane.expires_at <= Utc::now() && dane.burned_at.is_none() {
+        if dane.max_views >= dane.view_count && dane.expires_at >= Utc::now() && dane.burned_at.is_none() {
             Ok((dane.nonce,dane.ciphertext))
         } else {
             burn_secret(conn,secret_id).await?;
@@ -110,12 +110,13 @@ pub async fn burn_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Res
 
 
 }
-pub async fn retrieve_password(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<String,SecretErrors> {
+
+pub async fn retrieve_password(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<Option<String>,SecretErrors> {
     match sqlx::query_scalar!(
     "SELECT haslo FROM secrets WHERE secret_id = $1",secret_id
 ).fetch_one(conn).await {
-        Ok(data) => Ok(data.haslo),
-        Err => Err(SecretErrors::ConnectionFailed)
+        Ok(data) => Ok(data),
+        Err(_) => Err(SecretErrors::ConnectionFailed)
     }
 }
 
