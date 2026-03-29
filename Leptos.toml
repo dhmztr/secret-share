@@ -1,0 +1,9 @@
+[[workspace.members]]
+name = "secret-share"
+bin-package = "server"
+lib-package = "frontend"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "crates/frontend/src/styles.css"
+site-addr = "0.0.0.0:8080"
+output-name = "frontend"

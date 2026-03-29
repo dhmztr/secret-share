@@ -3,6 +3,87 @@ name = "frontend"
 version = "0.1.0"
 edition = "2024"
 
+# cdylib  → the .wasm binary cargo-leptos produces for the browser
+# rlib    → the library the server links against for SSR
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# ---------------------------------------------------------------------------
+# Features
+# ---------------------------------------------------------------------------
+[features]
+default = []
+
+# Server-side rendering (compiled into the server binary)
+ssr = [
+    "leptos/ssr",
+    "leptos_router/ssr",
+]
+
+# Client-side hydration (compiled to WASM by cargo-leptos)
+hydrate = [
+    "leptos/hydrate",
+    "dep:wasm-bindgen",
+    "dep:gloo-net",
+    "dep:web-sys",
+    "dep:js-sys",
+    "dep:wasm-bindgen-futures",
+    "dep:crypto",
+]
+
+# ---------------------------------------------------------------------------
+# Dependencies available on every target
+# ---------------------------------------------------------------------------
 [dependencies]
-leptos = { version = "0.8.17", features = ["ssr"] }
-uuid = { version = "1.18.1", features = ["v4", "fast-rng"] }
+leptos        = { version = "0.8.17", default-features = false }
+leptos_router = { version = "0.8",    default-features = false }
+
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64     = "0.22"
+
+# ---------------------------------------------------------------------------
+# Optional deps – only pulled in for the WASM / hydrate build
+# ---------------------------------------------------------------------------
+
+[dependencies.wasm-bindgen]
+version  = "0.2"
+optional = true
+
+[dependencies.wasm-bindgen-futures]
+version  = "0.4"
+optional = true
+
+[dependencies.gloo-net]
+version  = "0.6"
+features = ["json"]
+optional = true
+
+[dependencies.js-sys]
+version  = "0.3"
+optional = true
+
+[dependencies.web-sys]
+version  = "0.3"
+optional = true
+features = [
+    # window / location / clipboard
+    "Window",
+    "Navigator",
+    "Clipboard",
+    "Location",
+    # File API
+    "File",
+    "FileList",
+    "HtmlInputElement",
+    # Blob + object-URL (for file downloads)
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
+]
+
+# The crypto crate is a pure-Rust WASM-compatible library.
+# It is used client-side for ChaCha20 encryption and Argon2 password hashing.
+[dependencies.crypto]
+path     = "../crypto"
+optional = true

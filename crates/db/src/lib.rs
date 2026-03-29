@@ -1,28 +1,30 @@
-use chrono::{DateTime,Utc};
-use crypto::{Envelope};
-use sqlx::{self, postgres::{PgConnectOptions, PgPoolOptions}};
+use chrono::{DateTime, Utc};
+use crypto::Envelope;
+use sqlx::{
+    self,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use uuid::Uuid;
-const VERSION:i16= 1;
+const VERSION: i16 = 1;
 pub struct SecretLink {
     v: i16,
     nonce: Vec<u8>,
     cipher: Vec<u8>,
-    max_views:i32,
-    view_count:i32,
+    max_views: i32,
+    view_count: i32,
     expires_at: DateTime<Utc>,
-    burned_at:Option<DateTime<Utc>>,
-    created_at:DateTime<Utc>,
-    haslo:Option<String>
+    burned_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    haslo: Option<String>,
 }
 pub enum SecretErrors {
     Expired,
     ConnectionFailed,
     BadRequest,
-    NotAuthenticated
-
+    NotAuthenticated,
 }
 impl SecretLink {
-    pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>,haslo:Option<String>) -> Self {
+    pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
         Self {
             v: VERSION,
             nonce: env.nonce,
@@ -32,70 +34,80 @@ impl SecretLink {
             expires_at,
             burned_at: None,
             created_at: Utc::now(),
-            haslo
+            haslo: env.password,
         }
     }
 }
 
-
-
-pub async fn connect(user:&str,password:&str,port:u16,host:&str,dbname:&str) -> Result<sqlx::Pool<sqlx::Postgres>,String> {
+pub async fn connect(
+    user: &str,
+    password: &str,
+    port: u16,
+    host: &str,
+    dbname: &str,
+) -> Result<sqlx::Pool<sqlx::Postgres>, String> {
     let connect_options = PgConnectOptions::new()
         .password(password)
         .username(user)
         .port(port)
         .host(host)
         .database(dbname);
-    PgPoolOptions::new().max_connections(10).connect_with(connect_options).await.map_err(|err| format!("Error:{err}"))
-
-
-
-
+    PgPoolOptions::new()
+        .max_connections(10)
+        .connect_with(connect_options)
+        .await
+        .map_err(|err| format!("Error:{err}"))
 }
 
-pub async fn insert_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret:SecretLink) -> Result<Uuid,SecretErrors> {
-
-match sqlx::query_scalar!(
-    r#"
+pub async fn insert_secret(
+    conn: &sqlx::Pool<sqlx::Postgres>,
+    secret: SecretLink,
+) -> Result<Uuid, SecretErrors> {
+    match sqlx::query_scalar!(
+        r#"
     INSERT INTO secrets
         (v, nonce, ciphertext, max_views, view_count, expires_at, burned_at, created_at,haslo)
     VALUES
         ($1, $2, $3, $4, $5, $6, $7, $8,$9)
     RETURNING secret_id
     "#,
-    secret.v,
-    secret.nonce,
-    secret.cipher,
-    secret.max_views,
-    secret.view_count,
-    secret.expires_at,
-    secret.burned_at,
-    secret.created_at,
-    secret.haslo
-)
-.fetch_one(conn)
-.await
-{
+        secret.v,
+        secret.nonce,
+        secret.cipher,
+        secret.max_views,
+        secret.view_count,
+        secret.expires_at,
+        secret.burned_at,
+        secret.created_at,
+        secret.haslo
+    )
+    .fetch_one(conn)
+    .await
+    {
         Ok(new_uuid) => Ok(new_uuid),
-        Err(_) => Err(SecretErrors::ConnectionFailed)
+        Err(_) => Err(SecretErrors::ConnectionFailed),
     }
-
 }
-pub async fn select_metadata(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<(bool,bool,i32,DateTime<Utc>),SecretErrors> {
+pub async fn select_metadata(
+    conn: &sqlx::Pool<sqlx::Postgres>,
+    secret_id: Uuid,
+) -> Result<(bool, bool, i32, DateTime<Utc>), SecretErrors> {
     match sqlx::query!(
-    r#"
+        r#"
     SELECT haslo,burned_at,max_views,view_count,expires_at FROM secrets WHERE secret_id = $1"#,
-        secret_id).fetch_one(conn).await {
+        secret_id
+    )
+    .fetch_one(conn)
+    .await
+    {
         Ok(dane) => {
             let pass_exists = dane.haslo.is_some();
             let burned = dane.burned_at.is_some();
-            let views = (dane.max_views-dane.view_count).max(0);
-            Ok((pass_exists,burned,views,dane.expires_at))
-
+            let views = (dane.max_views - dane.view_count).max(0);
+            Ok((pass_exists, burned, views, dane.expires_at))
         }
-        Err(_) => Err(SecretErrors::ConnectionFailed)
+        Err(_) => Err(SecretErrors::ConnectionFailed),
     }
-
 }
 pub async fn increment_and_return(
     conn: &sqlx::Pool<sqlx::Postgres>,
@@ -118,49 +130,62 @@ pub async fn increment_and_return(
     .map_err(|_| SecretErrors::ConnectionFailed)?;
 
     match row {
-        Some(r) => Ok((r.nonce, r.ciphertext )),
-        None => {
-            Err(SecretErrors::Expired)
-        }
+        Some(r) => Ok((r.nonce, r.ciphertext)),
+        None => Err(SecretErrors::Expired),
     }
 }
-pub async fn select_password(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<Option<String>,SecretErrors> {
+pub async fn select_password(
+    conn: &sqlx::Pool<sqlx::Postgres>,
+    secret_id: Uuid,
+) -> Result<Option<String>, SecretErrors> {
     let row = sqlx::query!(
-    r#"
+        r#"
     SELECT
     haslo
     FROM secrets
     WHERE secret_id = $1
     "#,
-    secret_id).fetch_optional(conn).await.map_err(|_| SecretErrors::ConnectionFailed)?;
+        secret_id
+    )
+    .fetch_optional(conn)
+    .await
+    .map_err(|_| SecretErrors::ConnectionFailed)?;
     match row {
         Some(r) => Ok(r.haslo),
         None => Err(SecretErrors::Expired),
     }
-
-
-
 }
-pub async fn burn_secret(conn:&sqlx::Pool<sqlx::Postgres>,secret_id:Uuid) -> Result<String,SecretErrors> {
-
+pub async fn burn_secret(
+    conn: &sqlx::Pool<sqlx::Postgres>,
+    secret_id: Uuid,
+) -> Result<String, SecretErrors> {
     match sqlx::query_scalar!(
-    "UPDATE secrets SET burned_at = $1 WHERE secret_id = $2",Utc::now(),secret_id).fetch_one(conn).await {
-        Ok(_) =>  Ok(String::from("Ok")),
-        Err(_) => Err(SecretErrors::ConnectionFailed)
+        "UPDATE secrets SET burned_at = $1 WHERE secret_id = $2",
+        Utc::now(),
+        secret_id
+    )
+    .fetch_one(conn)
+    .await
+    {
+        Ok(_) => Ok(String::from("Ok")),
+        Err(_) => Err(SecretErrors::ConnectionFailed),
     }
-
-
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crypto::encrypt;
 
     #[tokio::test]
     pub async fn try_connect() {
-        let result = connect("secret_adm","tajnehaslo",5432,"192.168.88.6","secret_share").await;
+        let result = connect(
+            "secret_adm",
+            "tajnehaslo",
+            5432,
+            "192.168.88.6",
+            "secret_share",
+        )
+        .await;
         assert!(result.is_ok());
     }
 }
