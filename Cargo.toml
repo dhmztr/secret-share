@@ -1,5 +1,23 @@
-
-
 [workspace]
 resolver = "2"
 members = ["crates/server", "crates/crypto", "crates/db", "crates/frontend"]
+
+[[workspace.metadata.leptos]]
+name = "secret-share"
+bin-package = "server"
+lib-package = "frontend"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "crates/frontend/src/styles.css"
+site-addr = "0.0.0.0:8080"
+output-name = "frontend"
+
+# --- DODAJ TE LINIJKI ---
+# Włącza feature "hydrate" przy budowaniu frontendu (WASM)
+lib-features = ["hydrate"]
+lib-default-features = false
+
+# Włącza feature "ssr" przy budowaniu backendu (binarki serwera)
+bin-features = ["ssr"]
+bin-default-features = false
+# ------------------------

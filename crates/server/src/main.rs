@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use axum::{
     Router,
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
@@ -27,6 +29,25 @@ fn shell() -> impl IntoView {
     let pkg = std::env::var("LEPTOS_SITE_PKG_DIR").unwrap_or_else(|_| "pkg".to_string());
     let name = std::env::var("LEPTOS_OUTPUT_NAME").unwrap_or_else(|_| "frontend".to_string());
 
+    // Build the JS script as a raw string. Note we escape all JS braces with
+    // double braces {{ }} so format! treats them as literal braces, and we use
+    // {} placeholders to interpolate `pkg` and `name`.
+    let script_content = format!(
+        r#"
+        console.log("Loading WASM...");
+        import init, {{ hydrate }} from "/{}/{}.js";
+        init("/{}/{}.wasm")
+            .then(() => {{
+                console.log("WASM loaded successfully.");
+                hydrate();
+            }})
+            .catch(err => {{
+                console.error("WASM initialization failed:", err);
+            }});
+        "#,
+        pkg, name, pkg, name
+    );
+
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -46,14 +67,8 @@ fn shell() -> impl IntoView {
                 <link rel="icon"       href="/favicon.svg"/>
                 <link rel="stylesheet" href="/style.css"/>
 
-                // Load the WASM bundle.  `init()` fetches the .wasm binary;
-                // `.then(hydrate)` hands control to the Leptos reactive runtime.
-                <script type="module">
-                    {format!(
-                        "import init, {{ hydrate }} from '/{pkg}/{name}.js';\
-                         init().then(hydrate);"
-                    )}
-                </script>
+                // Inject the generated JS safely as the script's inner HTML
+                <script type="module" inner_html=script_content></script>
             </head>
             <body>
                 <App/>
@@ -61,7 +76,6 @@ fn shell() -> impl IntoView {
         </html>
     }
 }
-
 // ---------------------------------------------------------------------------
 // Misc handlers
 // ---------------------------------------------------------------------------
@@ -106,9 +120,9 @@ pub async fn make_router(pool: PgPool) -> Router {
     Router::new()
         // ── REST API ─────────────────────────────────────────────────────────
         .route("/api/secrets", post(encrypt_data))
-        .route("/api/secrets/:id/fetch", post(fetch_decrypt))
-        .route("/api/secrets/:id/meta", get(fetch_metadata))
-        .route("/api/secrets/:id/burn", post(burn))
+        .route("/api/secrets/{id}/fetch", post(fetch_decrypt))
+        .route("/api/secrets/{id}/meta", get(fetch_metadata))
+        .route("/api/secrets/{id}/burn", post(burn))
         // ── Static assets ────────────────────────────────────────────────────
         .route("/health", get(health))
         .route("/style.css", get(serve_style))
