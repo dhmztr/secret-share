@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aead = "0.5.2"
+aead   = { version = "0.5.2", features = ["getrandom"] }
 argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
-serde = { version = "1.0.228", features = ["derive"] }
-sqlx = { version = "0.8.6", features = ["postgres"] }
-uuid = "1.23.0"
+serde  = { version = "1.0", features = ["derive"] }
+
+# Needed so OsRng / SaltString::generate work inside the browser WASM sandbox.
+# On native targets getrandom already uses the OS entropy source; the "js"
+# feature is a no-op there, so it is safe to enable unconditionally.
+getrandom = { version = "0.2", features = ["js"] }
