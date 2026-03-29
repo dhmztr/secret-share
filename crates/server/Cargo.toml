@@ -4,17 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-any_spawner   = "0.3.0"
-axum          = { version = "0.8.8", features = ["macros"] }
-chrono        = { version = "0.4.44", features = ["serde"] }
-db            = { path = "../db" }
-crypto        = { path = "../crypto" }
-frontend      = { path = "../frontend", features = ["ssr"] }
-leptos        = { version = "0.8.17", features = ["ssr"] }
-leptos_axum   = { version = "0.8.8" }
+any_spawner = "0.3.0"
+axum = { version = "0.8.8", features = ["macros"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+db = { path = "../db" }
+crypto = { path = "../crypto" }
+frontend = { path = "../frontend", features = ["ssr"] }
+leptos = { version = "0.8.17", features = ["ssr"] }
+leptos_axum = { version = "0.8.8" }
 leptos_router = { version = "0.8", features = ["ssr"] }
-serde         = { version = "1.0", features = ["derive"] }
-sqlx          = { version = "0.8.6", features = ["postgres"] }
-tokio         = { version = "1.50.0", features = ["full"] }
-tower-http    = { version = "0.6", features = ["fs"] }
-uuid          = { version = "1.23.0", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+sqlx = { version = "0.8.6", features = ["postgres"] }
+tokio = { version = "1.50.0", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }
+uuid = { version = "1.23.0", features = ["serde"] }
+[features]
+default = []
+ssr = [
+  # Mówimy serwerowi, że jeśli buduje się w trybie SSR,
+  # ma też włączyć tryb SSR w Twoim frontendzie.
+  "frontend/ssr",
+  # Jeśli w serwerze używasz bezpośrednio leptosa lub leptos_axum,
+  # to powinieneś je tu dodać (odkomentuj jeśli są w [dependencies]):
+  # "leptos/ssr",
+  # "leptos_axum/ssr",
+]

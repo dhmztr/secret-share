@@ -423,12 +423,12 @@ fn CreatePage() -> impl IntoView {
         let fref = file_input_ref.clone();
 
         set_loading.set(true);
-
-        leptos::task::spawn_local(async move {
+leptos::task::spawn_local(async move {
             #[cfg(feature = "hydrate")]
             {
                 use client::create_secret;
                 use crypto::ContentType;
+                use wasm_bindgen::JsCast; // 👈 1. DODANY IMPORT
 
                 let result: Result<String, String> = match mode {
                     InputMode::Text => {
@@ -439,6 +439,7 @@ fn CreatePage() -> impl IntoView {
                         let maybe_file = fref
                             .get()
                             .as_deref()
+                            .and_then(|el| el.dyn_ref::<web_sys::HtmlInputElement>()) // 👈 2. DODANE RZUTOWANIE
                             .and_then(|el| el.files())
                             .and_then(|list| list.get(0));
 
