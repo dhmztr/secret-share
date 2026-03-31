@@ -13,7 +13,7 @@ use tower_http::services::ServeDir;
 
 mod apis;
 use apis::*;
-use db::connect;
+use db::connect_postgres;
 use frontend::{App, FAVICON, STYLES};
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ async fn main() {
         .parse()
         .expect("LEPTOS_SITE_ADDR is not a valid socket address");
 
-    let pool = connect(
+    let pool = connect_postgres(
         "secret_adm",
         "tajnehaslo",
         5432,

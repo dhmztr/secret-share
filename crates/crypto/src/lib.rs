@@ -34,7 +34,7 @@ pub struct Envelope {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContentType {
     Text,
-    File { name: String },
+    File { name: String,mime:String },
 }
 
 const TAG_TEXT: u8 = 0x01;
@@ -42,18 +42,31 @@ const TAG_FILE: u8 = 0x02;
 
 /// Prepend content-type metadata to `data` before encrypting.
 pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
-    let (tag, name_bytes): (u8, &[u8]) = match kind {
-        ContentType::Text => (TAG_TEXT, b""),
-        ContentType::File { name } => (TAG_FILE, name.as_bytes()),
-    };
+    match kind {
+        ContentType::Text => {
+            let mut out = Vec::with_capacity(1 + 2 + data.len());
+            out.push(TAG_TEXT);
+            out.extend_from_slice(&(0u16).to_be_bytes());
+            out.extend_from_slice(&(0u16).to_be_bytes());
+            out.extend_from_slice(data);
+            out
 
-    let name_len = name_bytes.len() as u16;
-    let mut out = Vec::with_capacity(3 + name_bytes.len() + data.len());
-    out.push(tag);
-    out.extend_from_slice(&name_len.to_be_bytes());
-    out.extend_from_slice(name_bytes);
-    out.extend_from_slice(data);
-    out
+        }
+    ContentType::File {name,mime} => {
+            let name_bytes = name.as_bytes();
+            let mime_bytes = mime.as_bytes();
+            let name_len = name_bytes.len() ;
+            let mime_len= name_bytes.len() ;
+            let mut out = Vec::with_capacity(3+name_bytes.len() + 2 +mime_bytes.len() + data.len());
+            out.push(TAG_FILE);
+            out.extend_from_slice(&name_len.to_be_bytes());
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(&mime_len.to_be_bytes());
+            out.extend_from_slice(mime_bytes );
+            out.extend_from_slice(data);
+            out
+        }
+    }
 }
 
 /// Recover content-type and raw content from a decrypted payload.
@@ -64,24 +77,41 @@ pub fn unwrap_payload(data: &[u8]) -> Result<(ContentType, Vec<u8>), String> {
 
     let tag = data[0];
     let name_len = u16::from_be_bytes([data[1], data[2]]) as usize;
+    let mut pos = 3usize;
 
-    if data.len() < 3 + name_len {
+    if data.len() < pos + name_len {
         return Err("payload truncated".to_string());
     }
 
-    let name = std::str::from_utf8(&data[3..3 + name_len])
+    let name = std::str::from_utf8(&data[pos..pos + name_len])
         .map_err(|_| "filename is not valid UTF-8".to_string())?
         .to_string();
 
-    let content = data[3 + name_len..].to_vec();
+let (mime, content) = if data.len() >= pos + 2 {
+       let mime_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+       pos += 2;
+       if data.len() < pos + mime_len {
+           return Err("payload truncated (mime)".to_string());
+       }
+       let mime_str = std::str::from_utf8(&data[pos..pos + mime_len])
+           .map_err(|_| "mime is not valid UTF-8".to_string())?
+           .to_string();
+       pos += mime_len;
+       let content = data[pos..].to_vec();
+       (mime_str, content)
+   } else {
+       // Old format: no mime_len/mime present — assume empty mime
+       let content = data[pos..].to_vec();
+       (String::new(), content)
+   };
 
-    let kind = match tag {
-        TAG_TEXT => ContentType::Text,
-        TAG_FILE => ContentType::File { name },
-        other => return Err(format!("unknown content-type tag: 0x{other:02x}")),
-    };
+   let kind = match tag {
+       TAG_TEXT => ContentType::Text,
+       TAG_FILE => ContentType::File { name, mime },
+       other => return Err(format!("unknown content-type tag: 0x{other:02x}")),
+   };
 
-    Ok((kind, content))
+   Ok((kind, content))
 }
 
 // ---------------------------------------------------------------------------

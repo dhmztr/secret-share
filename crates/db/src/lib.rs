@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
+use redis::AsyncCommands;
+use redis::aio::MultiplexedConnection;
 use crypto::Envelope;
 use sqlx::{
     self,
-    postgres::{PgConnectOptions, PgPoolOptions},
+    postgres::{PgPool,PgConnectOptions, PgPoolOptions},
 };
 use uuid::Uuid;
 const VERSION: i16 = 1;
@@ -23,6 +25,12 @@ pub enum SecretErrors {
     BadRequest,
     NotAuthenticated,
 }
+pub enum UsersErrors {
+    Exists,
+    DoesntExist,
+    Unauthorized,
+    ConnectionFailed
+}
 impl SecretLink {
     pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
         Self {
@@ -39,7 +47,7 @@ impl SecretLink {
     }
 }
 
-pub async fn connect(
+pub async fn connect_postgres(
     user: &str,
     password: &str,
     port: u16,
@@ -171,14 +179,55 @@ pub async fn burn_secret(
         Err(_) => Err(SecretErrors::ConnectionFailed),
     }
 }
+pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<Uuid,UsersErrors> {
+    if email_exists(conn,email).await.unwrap() {
+        return Err(UsersErrors::Exists)
+    }
+    let row = sqlx::query!(
+    "INSERT INTO users
+        (email,password_hash) VALUES
+($1,$2) RETURNING id
+        ",email,password
+).fetch_one(conn).await;
+    if let Ok(val) = row {
+        Ok(val.id)
+    } else {
+        Err(UsersErrors::ConnectionFailed)
+    }
+}
+pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<(String,String,String,i32),UsersErrors> {
+    if !email_exists(conn, email).await.unwrap() {
+        Err(UsersErrors::DoesntExist)
+    } else {
+    let row= sqlx::query!(
+    "SELECT password_hash,tier,subscription_status,quota_used FROM users WHERE email = $1",email
+).fetch_one(conn).await;
+        match row {
+            Ok(user_data) => Ok((user_data.password_hash,user_data.tier,user_data.subscription_status,user_data.quota_used)),
+            Err(_) => Err(UsersErrors::ConnectionFailed)
+        }
+    }
+}
+async fn connect_redis(address:&str) -> Result<MultiplexedConnection,Box<dyn std::error::Error>> {
+    let client = redis::Client::open(address)?;
+    let con = client.get_multiplexed_async_connection().await?;
+    Ok(con)
 
+
+}
+pub async fn email_exists(conn:&PgPool,email:&str) -> Result<bool,sqlx::Error>{
+    let exists = sqlx::query_scalar!(
+"SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)",
+email).fetch_one(conn).await?;
+    Ok(exists.unwrap_or(false))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    pub async fn try_connect() {
-        let result = connect(
+    pub async fn try_connect_psql() {
+        let result = connect_postgres(
             "secret_adm",
             "tajnehaslo",
             5432,
@@ -188,4 +237,11 @@ mod tests {
         .await;
         assert!(result.is_ok());
     }
+    #[tokio::test]
+    pub async fn try_connect_redis() {
+    let result = connect_redis("redis://192.168.88.6").await;
+    assert!(result.is_ok())
+    }
+
 }
+
