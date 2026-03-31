@@ -84,7 +84,7 @@ struct FetchResp {
 #[derive(Clone, Debug)]
 pub enum Decrypted {
     Text(String),
-    File { name: String, bytes: Vec<u8> },
+    File { name: String, mime: String, bytes: Vec<u8> },
 }
 
 // ── WASM-only module ────────────────────────────────────────────────────────
@@ -144,14 +144,16 @@ mod client {
     }
 
     /// Read a `File` object from the browser's File API into a `Vec<u8>`.
-    pub async fn read_file_bytes(file: &web_sys::File) -> Result<(String, Vec<u8>), String> {
+    pub async fn read_file_bytes(file: &web_sys::File) -> Result<(String, String, Vec<u8>), String> {
         let name = file.name();
+        // file.type_() returns the MIME string (may be empty)
+        let mime = file.type_();
         let promise = file.array_buffer();
         let buf = JsFuture::from(promise)
             .await
             .map_err(|e| format!("could not read file: {e:?}"))?;
         let arr = js_sys::Uint8Array::new(&buf);
-        Ok((name, arr.to_vec()))
+        Ok((name, mime, arr.to_vec()))
     }
 
     /// Create a temporary object URL for a `Vec<u8>` so the browser can
@@ -290,8 +292,9 @@ mod client {
                     .map_err(|_| "decrypted content is not valid UTF-8".to_string())?;
                 Ok(Decrypted::Text(text))
             }
-            ContentType::File { name } => Ok(Decrypted::File {
+            ContentType::File { name, mime } => Ok(Decrypted::File {
                 name,
+                mime,
                 bytes: content,
             }),
         }
@@ -447,8 +450,8 @@ leptos::task::spawn_local(async move {
                             None => Err("No file selected.".to_string()),
                             Some(f) => match client::read_file_bytes(&f).await {
                                 Err(e) => Err(e),
-                                Ok((name, bytes)) => {
-                                    create_secret(ContentType::File { name }, bytes, mv, pass, days)
+                                Ok((name, mime, bytes)) => {
+                                    create_secret(ContentType::File { name, mime }, bytes, mv, pass, days)
                                         .await
                                 }
                             },
@@ -1010,13 +1013,13 @@ fn ViewPage() -> impl IntoView {
                             </div>
                         }.into_any(),
 
-                        Some(Decrypted::File { name, bytes }) => {
+                        Some(Decrypted::File { name, mime, bytes }) => {
                             // Build a temporary object URL so the browser can
                             // download the file without re-contacting the server.
                             #[cfg(feature = "hydrate")]
                             let dl_url = client::make_blob_url(
                                 &bytes,
-                                "application/octet-stream",
+                                if mime.is_empty() { "application/octet-stream" } else { &mime },
                             )
                             .unwrap_or_default();
 
