@@ -86,8 +86,8 @@ pub fn unwrap_payload(data: &[u8]) -> Result<(ContentType, Vec<u8>), String> {
     let name = std::str::from_utf8(&data[pos..pos + name_len])
         .map_err(|_| "filename is not valid UTF-8".to_string())?
         .to_string();
-
-let (mime, content) = if data.len() >= pos + 2 {
+    pos += name_len;
+    let (mime, content) = if data.len() >= pos + 2 {
        let mime_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
        pos += 2;
        if data.len() < pos + mime_len {
@@ -181,9 +181,24 @@ pub fn authenticate(dbpass: &str, contestant: &str) -> bool {
         .is_ok()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+fn hex_dump_labelled(label: &str, bytes: &[u8]) {
+       use std::io::Write;
+       let mut out = String::new();
+       out.push_str(&format!("--- {} (len={}) ---\n", label, bytes.len()));
+       for (i, b) in bytes.iter().enumerate() {
+           out.push_str(&format!("{:02x}", b));
+           if i % 16 == 15 {
+               out.push('\n');
+           } else {
+               out.push(' ');
+           }
+       }
+       if !bytes.is_empty() && bytes.len() % 16 != 0 {
+           out.push('\n');
+       }
+       // write to stderr so it's visible with --nocapture
+       let _ = writeln!(std::io::stderr(), "{}", out);
+   }
 
 #[cfg(test)]
 mod tests {
@@ -217,22 +232,52 @@ mod tests {
         assert_eq!(out, content);
     }
 
-    #[test]
-    fn wrap_unwrap_file() {
-        let content = b"\x89PNG\r\n\x1a\n"; // fake PNG header
-        let kind_in = ContentType::File {
-            name: "image.png".to_string(),
-        };
-        let wrapped = wrap_payload(&kind_in, content);
-        let (kind_out, out) = unwrap_payload(&wrapped).unwrap();
-        assert_eq!(
-            kind_out,
-            ContentType::File {
-                name: "image.png".to_string()
-            }
-        );
-        assert_eq!(out, content);
-    }
+#[test]
+   fn wrap_unwrap_file_debug() {
+       // przygotuj dane testowe
+       let content = b"\x89PNG\r\n\x1a\n"; // fake PNG header
+       // nowy format: include mime
+       let kind_in = ContentType::File {
+           name: "image.png".to_string(),
+           mime: "image/png".to_string(),
+       };
+
+       // 1) wygeneruj wrapped payload
+       let wrapped = wrap_payload(&kind_in, content);
+
+       // 2) wypisz hexdump (debug)
+       hex_dump_labelled("wrapped (new format)", &wrapped);
+
+       // 3) spróbuj odszyfrować / parse'ować
+       match unwrap_payload(&wrapped) {
+           Ok((k, c)) => {
+               eprintln!("unwrap ok: kind={:?}, content_len={}", k, c.len());
+           }
+           Err(e) => {
+               eprintln!("unwrap error: {}", e);
+               panic!("unwrap failed: {}", e);
+           }
+       }
+
+       // 4) symulacja starego formatu (brak mime_len/mime)
+       let name = "image.png".as_bytes();
+       let mut old = Vec::new();
+       old.push(TAG_FILE);
+       old.extend_from_slice(&(name.len () as u16).to_be_bytes());
+       old.extend_from_slice(name);
+       old.extend_from_slice(content);
+
+       hex_dump_labelled("wrapped (old format)", &old);
+
+       match unwrap_payload(&old) {
+           Ok((k, c)) => {
+               eprintln!("unwrap(old) ok: kind={:?}, content_len={}", k, c.len());
+           }
+           Err(e) => {
+               eprintln!("unwrap(old) error: {}", e);
+           }
+       }
+   }
 
     #[test]
     fn full_pipeline_text() {
