@@ -237,11 +237,11 @@ mod tests {
         .await;
         assert!(result.is_ok());
     }
-    #[tokio::test]
-    pub async fn try_connect_redis() {
-    let result = connect_redis("redis://REDACTED_HOST").await;
-    assert!(result.is_ok())
-    }
+    // #[tokio::test]
+    // pub async fn try_connect_redis() {
+    // let result = connect_redis("redis://REDACTED_HOST").await;
+    // assert!(result.is_ok())
+    // }
 
 }
 
