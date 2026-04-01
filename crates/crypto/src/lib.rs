@@ -57,7 +57,7 @@ pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
             let mime_bytes = mime.as_bytes();
             let name_len = name_bytes.len() as u16;
             let mime_len= mime_bytes.len() as u16;
-            let mut out = Vec::with_capacity(3+name_bytes.len() + 2 + mime_bytes.len() + data.len());
+            let mut out = Vec::with_capacity(1 + 2 + name_bytes.len() + 2 + mime_bytes.len() + data.len());
             out.push(TAG_FILE);
             out.extend_from_slice(&name_len.to_be_bytes());
             out.extend_from_slice(name_bytes);
@@ -71,49 +71,59 @@ pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
 
 /// Recover content-type and raw content from a decrypted payload.
 pub fn unwrap_payload(data: &[u8]) -> Result<(ContentType, Vec<u8>), String> {
-    if data.len() < 3 {
-        return Err("payload too short".to_string());
-    }
+     if data.is_empty() {
+         return Err("payload too short".to_string());
+     }
 
-    let tag = data[0];
-    let name_len = u16::from_be_bytes([data[1], data[2]]) as usize;
-    let mut pos = 3usize;
-
-    if data.len() < pos + name_len {
-        return Err("payload truncated".to_string());
-    }
-
-    let name = std::str::from_utf8(&data[pos..pos + name_len])
-        .map_err(|_| "filename is not valid UTF-8".to_string())?
-        .to_string();
-    pos += name_len;
-    let (mime, content) = if data.len() >= pos + 2 {
-       let mime_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-       pos += 2;
-       if data.len() < pos + mime_len {
-           return Err("payload truncated (mime)".to_string());
+   let tag = data[0];
+   match tag {
+       TAG_TEXT => {
+           // Expect tag(1) + name_len(2) + mime_len(2) = 5 bytes header
+           if data.len() < 5 {
+               return Err("payload too short for text".to_string());
+           }
+           let content = data[5..].to_vec();
+           Ok((ContentType::Text, content))
        }
-       let mime_str = std::str::from_utf8(&data[pos..pos + mime_len])
-           .map_err(|_| "mime is not valid UTF-8".to_string())?
-           .to_string();
-       pos += mime_len;
-       let content = data[pos..].to_vec();
-       (mime_str, content)
-   } else {
-       // Old format: no mime_len/mime present — assume empty mime
-       let content = data[pos..].to_vec();
-       (String::new(), content)
-   };
 
-   let kind = match tag {
-       TAG_TEXT => ContentType::Text,
-       TAG_FILE => ContentType::File { name, mime },
-       other => return Err(format!("unknown content-type tag: 0x{other:02x}")),
-   };
+       TAG_FILE => {
+           // Need at least tag(1) + name_len(2)
+           if data.len() < 3 {
+               return Err("payload too short for file header".to_string());
+           }
+           let name_len = u16::from_be_bytes([data[1], data[2]]) as usize;
+           let mut pos = 3usize;
 
-   Ok((kind, content))
+           if data.len() < pos + name_len {
+               return Err("payload truncated (name)".to_string());
+           }
+           let name = std::str::from_utf8(&data[pos..pos + name_len])
+               .map_err(|_| "filename is not valid UTF-8".to_string())?
+               .to_string();
+           pos += name_len;
+
+           // Need mime_len(2)
+           if data.len() < pos + 2 {
+               return Err("payload truncated (mime length)".to_string());
+           }
+           let mime_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+           pos += 2;
+
+           if data.len() < pos + mime_len {
+               return Err("payload truncated (mime)".to_string());
+           }
+           let mime = std::str::from_utf8(&data[pos..pos + mime_len])
+               .map_err(|_| "mime is not valid UTF-8".to_string())?
+               .to_string();
+           pos += mime_len;
+
+           let content = data[pos..].to_vec();
+           Ok((ContentType::File { name, mime }, content))
+       }
+
+       other => Err(format!("unknown content-type tag: 0x{other:02x}")),
+   }
 }
-
 // ---------------------------------------------------------------------------
 // Symmetric encryption / decryption (ChaCha20-Poly1305)
 // ---------------------------------------------------------------------------
