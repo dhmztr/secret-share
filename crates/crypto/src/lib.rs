@@ -55,9 +55,9 @@ pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
     ContentType::File {name,mime} => {
             let name_bytes = name.as_bytes();
             let mime_bytes = mime.as_bytes();
-            let name_len = name_bytes.len() ;
-            let mime_len= name_bytes.len() ;
-            let mut out = Vec::with_capacity(3+name_bytes.len() + 2 +mime_bytes.len() + data.len());
+            let name_len = name_bytes.len() as u16;
+            let mime_len= mime_bytes.len() as u16;
+            let mut out = Vec::with_capacity(3+name_bytes.len() + 2 + mime_bytes.len() + data.len());
             out.push(TAG_FILE);
             out.extend_from_slice(&name_len.to_be_bytes());
             out.extend_from_slice(name_bytes);
@@ -256,6 +256,9 @@ mod tests {
            Err(e) => {
                eprintln!("unwrap error: {}", e);
                panic!("unwrap failed: {}", e);
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
            }
        }
 
