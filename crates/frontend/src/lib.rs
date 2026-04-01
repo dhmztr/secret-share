@@ -440,7 +440,7 @@ leptos::task::spawn_local(async move {
                     InputMode::File => {
                         // Grab the File from the <input type="file"> DOM node.
                         let maybe_file = fref
-                            .get()
+                            .get_untracked()
                             .as_deref()
                             .and_then(|el| el.dyn_ref::<web_sys::HtmlInputElement>()) // 👈 2. DODANE RZUTOWANIE
                             .and_then(|el| el.files())
@@ -451,8 +451,12 @@ leptos::task::spawn_local(async move {
                             Some(f) => match client::read_file_bytes(&f).await {
                                 Err(e) => Err(e),
                                 Ok((name, mime, bytes)) => {
+                                    if bytes.len() > 262144040 {
+                                        Err("File is too large! Maximum size for your plan is: 25MB".to_string())
+                                    } else {
                                     create_secret(ContentType::File { name, mime }, bytes, mv, pass, days)
                                         .await
+                                    }
                                 }
                             },
                         }
