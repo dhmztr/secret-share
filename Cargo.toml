@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/server", "crates/crypto", "crates/db", "crates/frontend"]
+members = ["crates/server", "crates/crypto", "crates/db", "crates/frontend","crates/auth"]
 
 [[workspace.metadata.leptos]]
 name = "secret-share"

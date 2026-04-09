@@ -22,6 +22,7 @@
             cargo
             wasm-bindgen-cli
             pkg-config
+            lld
             openssl
           ];
 

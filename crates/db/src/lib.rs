@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use serde::{Serialize,Deserialize};
 use redis::AsyncCommands;
 use redis::aio::MultiplexedConnection;
 use crypto::Envelope;
@@ -6,6 +7,15 @@ use sqlx::{
     self,
     postgres::{PgPool,PgConnectOptions, PgPoolOptions},
 };
+#[derive(Serialize,Deserialize)]
+pub struct User {
+    email:String,
+    password_hash:String,
+    tier: UserTiers,
+    quota_used: i32,
+
+
+}
 use uuid::Uuid;
 const VERSION: i16 = 1;
 pub struct SecretLink {
@@ -18,6 +28,12 @@ pub struct SecretLink {
     burned_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     haslo: Option<String>,
+}
+#[derive(Deserialize,Serialize)]
+pub enum UserTiers {
+    Free,
+    Premium,
+    Enterprise
 }
 pub enum SecretErrors {
     Expired,
@@ -46,7 +62,16 @@ impl SecretLink {
         }
     }
 }
-
+impl From<&str> for UserTiers {
+    fn from(value:&str) -> Self {
+        match value {
+            "Free" => UserTiers::Free,
+            "Premium" => UserTiers::Premium,
+            "Enterprise" => UserTiers::Enterprise,
+            _ => unreachable!()
+        }
+    }
+}
 pub async fn connect_postgres(
     user: &str,
     password: &str,
@@ -65,6 +90,14 @@ pub async fn connect_postgres(
         .connect_with(connect_options)
         .await
         .map_err(|err| format!("Error:{err}"))
+}
+
+pub async fn connect_redis(address:&str) -> Result<MultiplexedConnection,Box<dyn std::error::Error>> {
+    let client = redis::Client::open(address)?;
+    let con = client.get_multiplexed_async_connection().await?;
+    Ok(con)
+
+
 }
 
 pub async fn insert_secret(
@@ -142,7 +175,7 @@ pub async fn increment_and_return(
         None => Err(SecretErrors::Expired),
     }
 }
-pub async fn select_password(
+pub async fn select_secret_password(
     conn: &sqlx::Pool<sqlx::Postgres>,
     secret_id: Uuid,
 ) -> Result<Option<String>, SecretErrors> {
@@ -179,6 +212,7 @@ pub async fn burn_secret(
         Err(_) => Err(SecretErrors::ConnectionFailed),
     }
 }
+
 pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<Uuid,UsersErrors> {
     if email_exists(conn,email).await.unwrap() {
         return Err(UsersErrors::Exists)
@@ -195,31 +229,38 @@ pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<Uuid,U
         Err(UsersErrors::ConnectionFailed)
     }
 }
-pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<(String,String,String,i32),UsersErrors> {
+pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<User,UsersErrors> {
     if !email_exists(conn, email).await.unwrap() {
         Err(UsersErrors::DoesntExist)
     } else {
     let row= sqlx::query!(
-    "SELECT password_hash,tier,subscription_status,quota_used FROM users WHERE email = $1",email
+    "SELECT password_hash,tier,quota_used FROM users WHERE email = $1",email
 ).fetch_one(conn).await;
         match row {
-            Ok(user_data) => Ok((user_data.password_hash,user_data.tier,user_data.subscription_status,user_data.quota_used)),
+            Ok(user_data) => Ok(User {
+                email:email.to_string(),
+                password_hash:user_data.password_hash,
+                tier:UserTiers::from(user_data.tier.as_str()),
+                quota_used:user_data.quota_used
+
+            }),
             Err(_) => Err(UsersErrors::ConnectionFailed)
         }
     }
 }
-async fn connect_redis(address:&str) -> Result<MultiplexedConnection,Box<dyn std::error::Error>> {
-    let client = redis::Client::open(address)?;
-    let con = client.get_multiplexed_async_connection().await?;
-    Ok(con)
 
-
-}
 pub async fn email_exists(conn:&PgPool,email:&str) -> Result<bool,sqlx::Error>{
     let exists = sqlx::query_scalar!(
 "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)",
 email).fetch_one(conn).await?;
     Ok(exists.unwrap_or(false))
+}
+pub async fn fetch_password(conn:&PgPool,email:&str) -> Result<String,sqlx::Error> {
+    let passwd = sqlx::query_scalar!(
+        "SELECT password_hash FROM users WHERE email=$1",email).fetch_one(conn).await;
+    passwd
+
+    
 }
 #[cfg(test)]
 mod tests {
@@ -237,11 +278,14 @@ mod tests {
         .await;
         assert!(result.is_ok());
     }
-    // #[tokio::test]
-    // pub async fn try_connect_redis() {
-    // let result = connect_redis("redis://192.168.88.6").await;
-    // assert!(result.is_ok())
-    // }
+    #[tokio::test]
+    pub async fn try_connect_redis() {
+    let result = connect_redis("redis://192.168.88.6/").await;
+    match result {
+        Ok(_) => assert!(result.is_ok()),
+        Err(ref r) => {eprintln!("error!!: {}",r); assert!(result.is_ok())}
+    }
+    }
 
 }
 
