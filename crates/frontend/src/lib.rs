@@ -451,7 +451,7 @@ leptos::task::spawn_local(async move {
                             Some(f) => match client::read_file_bytes(&f).await {
                                 Err(e) => Err(e),
                                 Ok((name, mime, bytes)) => {
-                                    if bytes.len() > 262144040 {
+                                    if bytes.len() as u64 > 25*1024*1024{
                                         Err("File is too large! Maximum size for your plan is: 25MB".to_string())
                                     } else {
                                     create_secret(ContentType::File { name, mime }, bytes, mv, pass, days)

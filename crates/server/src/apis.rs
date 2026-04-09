@@ -2,15 +2,15 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
 };
+use crate::AppState;
 use chrono::{DateTime, Utc};
 use crypto::Envelope;
 use crypto::authenticate;
 use db::SecretErrors;
 use db::{
-    SecretLink, burn_secret, increment_and_return, insert_secret, select_metadata, select_password,
+    SecretLink, burn_secret, increment_and_return, insert_secret, select_metadata, select_secret_password
 };
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -71,11 +71,11 @@ impl From<(Vec<u8>, Vec<u8>)> for DecryptData {
 /// Store a new encrypted secret and return its UUID.
 #[axum::debug_handler]
 pub async fn encrypt_data(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Json(req): Json<CreateSecretReq>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
     let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
-    let id = insert_secret(&pool, secret).await.map_err(|_| {
+    let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "database error".to_string(),
@@ -88,7 +88,7 @@ pub async fn encrypt_data(
 /// raw nonce + ciphertext so the client can decrypt with the key from the URL
 /// fragment.
 pub async fn fetch_decrypt(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(path_data): Path<String>,
     Json(req): Json<FetchDecryptReq>,
 ) -> Result<Json<DecryptData>, (StatusCode, String)> {
@@ -97,7 +97,7 @@ pub async fn fetch_decrypt(
 
     // Check whether the secret is password-protected.
     let dbpass_opt: Option<String> =
-        select_password(&pool, secret_uuid)
+        select_secret_password(&state.postgres, secret_uuid)
             .await
             .map_err(|e| match e {
                 SecretErrors::Expired => (StatusCode::GONE, "secret expired".to_string()),
@@ -122,7 +122,7 @@ pub async fn fetch_decrypt(
     }
 
     let (nonce, ciphertext) =
-        increment_and_return(&pool, secret_uuid)
+        increment_and_return(&state.postgres, secret_uuid)
             .await
             .map_err(|e| match e {
                 SecretErrors::ConnectionFailed => (
@@ -142,13 +142,13 @@ pub async fn fetch_decrypt(
 /// Return non-sensitive metadata so the client can decide whether to prompt
 /// for a password before spending a view.
 pub async fn fetch_metadata(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(path_data): Path<String>,
 ) -> Result<Json<MetadataResponse>, (StatusCode, String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
 
-    let data = select_metadata(&pool, secret_uuid).await.map_err(|_| {
+    let data = select_metadata(&state.postgres, secret_uuid).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "database error".to_string(),
@@ -160,13 +160,13 @@ pub async fn fetch_metadata(
 
 /// Permanently mark the secret as burned (destroyed on demand).
 pub async fn burn(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(path_data): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
 
-    burn_secret(&pool, secret_uuid).await.map_err(|_| {
+    burn_secret(&state.postgres, secret_uuid).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to burn secret".to_string(),

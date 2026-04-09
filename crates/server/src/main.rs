@@ -1,19 +1,34 @@
 #![recursion_limit = "256"]
 
 use axum::{
+    extract::State,
     Router,
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::IntoResponse,
     routing::{get, post},
 };
+use sqlx::{Pool,Postgres};
 use leptos::prelude::*;
-use sqlx::PgPool;
 use std::net::SocketAddr;
 use tower_http::services::ServeDir;
+use redis::aio::MultiplexedConnection;
+#[derive(Clone)]
+pub struct AppState {
+    pub redis:MultiplexedConnection,
+    pub postgres: Pool<Postgres>,
+}
+impl AppState {
+    pub fn new(redis:MultiplexedConnection,postgres:Pool<Postgres>) -> Self {
+        AppState {
+            redis,
+            postgres
+        }
 
+    }
+}
 mod apis;
 use apis::*;
-use db::connect_postgres;
+use db::{connect_postgres,connect_redis};
 use frontend::{App, FAVICON, STYLES};
 
 // ---------------------------------------------------------------------------
@@ -108,7 +123,7 @@ async fn health() -> impl IntoResponse {
 // Router
 // ---------------------------------------------------------------------------
 
-pub async fn make_router(pool: PgPool) -> Router {
+pub async fn make_router(pool: AppState) -> Router {
     // cargo-leptos sets these env vars before starting the server.
     // Defaults are used when running `cargo run` directly (non-cargo-leptos).
     let site_root = std::env::var("LEPTOS_SITE_ROOT").unwrap_or_else(|_| "target/site".to_string());
@@ -151,7 +166,7 @@ async fn main() {
         .parse()
         .expect("LEPTOS_SITE_ADDR is not a valid socket address");
 
-    let pool = connect_postgres(
+    let psql_pool = connect_postgres(
         "REDACTED_USER",
         "REDACTED_PASSWORD",
         5432,
@@ -160,11 +175,12 @@ async fn main() {
     )
     .await
     .expect("failed to connect to PostgreSQL");
-
+    let redis_pool = connect_redis("redis;//REDACTED_HOST:6379").await.expect("Failed to connect to redis");
+    let state = AppState::new(redis_pool,psql_pool);
     // Initialise the async executor that Leptos uses for SSR.
     let _ = any_spawner::Executor::init_tokio();
 
-    let app = make_router(pool).await;
+    let app = make_router(state).await;
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
