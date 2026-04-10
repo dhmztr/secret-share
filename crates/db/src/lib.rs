@@ -1,18 +1,19 @@
 use chrono::{DateTime, Utc};
 use serde::{Serialize,Deserialize};
-use redis::AsyncCommands;
+use redis::{AsyncCommands, ErrorKind, RedisError};
 use redis::aio::MultiplexedConnection;
 use crypto::Envelope;
+use sqlx::Error;
 use sqlx::{
     self,
     postgres::{PgPool,PgConnectOptions, PgPoolOptions},
 };
 #[derive(Serialize,Deserialize)]
 pub struct User {
-    email:String,
-    password_hash:String,
-    tier: UserTiers,
-    quota_used: i32,
+    pub email:String,
+    pub password_hash:String,
+    pub tier: UserTiers,
+    pub quota_left: i32,
 
 
 }
@@ -99,6 +100,45 @@ pub async fn connect_redis(address:&str) -> Result<MultiplexedConnection,Box<dyn
 
 
 }
+
+pub async fn redis_set_quota_data(mut conn:(&PgPool,MultiplexedConnection),email:&str) -> Result<i32,UsersErrors> {
+    let user = fetch_user(conn.0, email).await?;
+    conn.1.set::<&String,i32,()>(&user.email,user.quota_left).
+        await.map_err(|e| match e {
+        _ => UsersErrors::ConnectionFailed})?;
+    Ok(user.quota_left)
+}
+pub async fn redis_synchronize_quota(mut conn:(&PgPool,MultiplexedConnection)) -> Result<(),RedisError> {
+    let mut conn_get = conn.1.clone();
+    let mut redisiter:redis::AsyncIter<String> = conn.1.scan().await?;
+    while let Some(key) = redisiter.next_item().await {
+        let key_string = key?.clone();
+        let val: Option<i32> = conn_get.get(&key_string).await?;
+        match val {
+  Some(numer) => {
+                sqlx::query!("UPDATE users SET quota_left = $1 WHERE email = $2", numer, key_string)
+                    .execute(conn.0)
+                    .await
+                    .map_err(|e| {
+                        // Tutaj logujemy oryginalny błąd (opcjonalnie), żeby wiedzieć co się zepsuło
+                        eprintln!("Błąd SQLx: {}", e);
+                        
+                        // Konwersja błędu sqlx::Error na redis::RedisError
+                        RedisError::from((
+                            ErrorKind::Server(redis::ServerErrorKind::ResponseError),
+                            "Nie udało się zaktualizować bazy danych"
+                        ))
+                    })?; // Znak zapytania na końcu, żeby przerwać w razie błędu
+            },
+                
+            None => continue
+
+};
+        }
+Ok(())
+        
+    }
+
 
 pub async fn insert_secret(
     conn: &sqlx::Pool<sqlx::Postgres>,
@@ -234,14 +274,14 @@ pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<User,UsersErrors> {
         Err(UsersErrors::DoesntExist)
     } else {
     let row= sqlx::query!(
-    "SELECT password_hash,tier,quota_used FROM users WHERE email = $1",email
+    "SELECT password_hash,tier,quota_left FROM users WHERE email = $1",email
 ).fetch_one(conn).await;
         match row {
             Ok(user_data) => Ok(User {
                 email:email.to_string(),
                 password_hash:user_data.password_hash,
                 tier:UserTiers::from(user_data.tier.as_str()),
-                quota_used:user_data.quota_used
+                quota_left:user_data.quota_left
 
             }),
             Err(_) => Err(UsersErrors::ConnectionFailed)

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 db = {path = "../db"}
+server = {path = "../server"}
 argon2 = "0.5.3"
 chrono = { version = "0.4.44", features = ["serde"] }
 crypto = { path = "../crypto" }
@@ -12,3 +13,5 @@ jsonwebtoken = "10.3.0"
 tokio = "1.50.0"
 serde = { version = "1.0.228", features = ["derive"] }
 rand = "0.10.0"
+async-fs = "2.2.0"
+sqlx = { version = "0.8.6", features = ["postgres"] }
