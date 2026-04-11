@@ -2,11 +2,12 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
 };
+use auth::{login_user,register_user, verify_token};
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use crypto::Envelope;
 use crypto::authenticate;
-use db::SecretErrors;
+use db::{SecretErrors, UsersErrors, redis_process_quota};
 use db::{
     SecretLink, burn_secret, increment_and_return, insert_secret, select_metadata, select_secret_password
 };
@@ -35,6 +36,7 @@ pub struct CreateSecretReq {
     pub env: Envelope,
     pub max_views: i32,
     pub expires_at: DateTime<Utc>,
+    pub token: String
 }
 
 /// Request body for POST /api/secrets/:id/fetch.
@@ -73,7 +75,12 @@ impl From<(Vec<u8>, Vec<u8>)> for DecryptData {
 pub async fn encrypt_data(
     State(state): State<AppState>,
     Json(req): Json<CreateSecretReq>,
+    
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
+    if let Ok(useremail) = verify_token(req.token).await {
+        if let Ok(amount_left) = redis_process_quota(state.redis, &useremail).await {
+            if amount_left >= 0 {
+
     let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
     let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
         (
@@ -81,7 +88,17 @@ pub async fn encrypt_data(
             "database error".to_string(),
         )
     })?;
+
     Ok(Json(id))
+            } else {
+                Err((StatusCode::UNAUTHORIZED,"No quota left :(".to_owned()))
+            }
+        } else {
+            Err((StatusCode::INTERNAL_SERVER_ERROR,"Failed to fetch remaining quota".to_owned()))
+        }
+    } else {
+        Err((StatusCode::UNAUTHORIZED,"Verification failed".to_owned()))
+    }
 }
 
 /// Verify the optional password, increment the view counter, and return the
@@ -174,4 +191,28 @@ pub async fn burn(
     })?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn login(State(state): State<AppState>,email:&str,passhash:&str) -> Result<(StatusCode,String),(StatusCode,String)> {
+    if let Ok(token) = login_user(&state.postgres, email, passhash).await {
+        Ok((StatusCode::OK,token))
+    } else {
+        Err((StatusCode::UNAUTHORIZED,"Failed to login user".to_owned()))
+    }
+
+}
+
+pub async fn register(State(state): State<AppState>,email:&str,passhash:&str) -> Result<(StatusCode,String),(StatusCode,String)> {
+    match register_user(&state.postgres,email,passhash).await {
+        Ok(val) => Ok((StatusCode::CREATED,val)),
+        Err(e) => match e {
+            UsersErrors::TokenCreationFailed => 
+                Err((StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to create user token".to_string())),
+            UsersErrors::Exists => Err((StatusCode::FOUND,"User already exists".to_owned())),
+            UsersErrors::ConnectionFailed => Err((StatusCode::INTERNAL_SERVER_ERROR,"Failed to connect to db".to_string())),
+                _ => unreachable!(),
+                
+        }
+    }
 }

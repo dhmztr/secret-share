@@ -195,7 +195,6 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.10.0",
  "serde",
- "server",
  "sqlx",
  "tokio",
 ]
@@ -2677,6 +2676,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "any_spawner",
+ "auth",
  "axum",
  "chrono",
  "crypto",

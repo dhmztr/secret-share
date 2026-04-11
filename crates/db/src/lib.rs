@@ -46,7 +46,9 @@ pub enum UsersErrors {
     Exists,
     DoesntExist,
     Unauthorized,
-    ConnectionFailed
+    ConnectionFailed,
+    TokenCreationFailed,
+    Expired
 }
 impl SecretLink {
     pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
@@ -98,6 +100,11 @@ pub async fn connect_redis(address:&str) -> Result<MultiplexedConnection,Box<dyn
     let con = client.get_multiplexed_async_connection().await?;
     Ok(con)
 
+
+}
+pub async fn redis_process_quota(mut conn:MultiplexedConnection,email:&str) -> Result<i32,RedisError> {
+    let new_val:i32 = conn.decr(email, 1).await?;
+    Ok(new_val)
 
 }
 
@@ -253,7 +260,7 @@ pub async fn burn_secret(
     }
 }
 
-pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<Uuid,UsersErrors> {
+pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<(),UsersErrors> {
     if email_exists(conn,email).await.unwrap() {
         return Err(UsersErrors::Exists)
     }
@@ -263,8 +270,8 @@ pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<Uuid,U
 ($1,$2) RETURNING id
         ",email,password
 ).fetch_one(conn).await;
-    if let Ok(val) = row {
-        Ok(val.id)
+    if let Ok(_) = row {
+        Ok(())
     } else {
         Err(UsersErrors::ConnectionFailed)
     }
