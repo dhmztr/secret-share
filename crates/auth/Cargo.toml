@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 db = {path = "../db"}
-server = {path = "../server"}
 argon2 = "0.5.3"
 chrono = { version = "0.4.44", features = ["serde"] }
 crypto = { path = "../crypto" }

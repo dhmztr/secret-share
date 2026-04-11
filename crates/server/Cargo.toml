@@ -8,6 +8,7 @@ any_spawner = "0.3.0"
 axum = { version = "0.8.8", features = ["macros"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 db = { path = "../db" }
+auth = { path = "../auth" }
 crypto = { path = "../crypto" }
 frontend = { path = "../frontend", features = ["ssr"] }
 leptos = { version = "0.8.17", features = ["ssr"] }
