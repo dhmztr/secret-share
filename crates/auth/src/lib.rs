@@ -42,21 +42,25 @@ pub async fn create_token(conn:&PgPool,user:&str) -> Result<String,UsersErrors> 
 
 }
 
-pub async fn verify_token(token_to_check: String) -> Result<String, UsersErrors> {
-    let token = token_to_check
-        .trim()
-        .replace("Bearer ", "");
+pub async fn verify_token(token_to_check:String) -> Result<String,UsersErrors>{
+     println!("JWT SECRET USED: {}", get_jwt_secret());
 
-    let token_data = jsonwebtoken::decode::<Claim>(
-        &token,
+    println!("Token: {}, len: {}",token_to_check,token_to_check.len());
+    let token_data = jsonwebtoken::decode::<Claim>(&token_to_check, 
         &jsonwebtoken::DecodingKey::from_secret(get_jwt_secret().as_bytes()),
-        &jsonwebtoken::Validation::default(),
-    ).map_err(|e| {
-        println!("JWT ERROR: {:?}", e);
-        UsersErrors::Unauthorized
-    })?;
-
+        &jsonwebtoken::Validation::default()).unwrap();
     Ok(token_data.claims.userid)
+}
+
+pub async fn login_user(conn:&PgPool,user:&str,password:&str) -> Result<String,UsersErrors> {
+    let user_data = db::fetch_user(conn,user).await?;
+    let parsed_hash = PasswordHash::new(&user_data.password_hash).unwrap();
+    let argon2 = Argon2::default();
+    match argon2.verify_password(password.as_bytes(),&parsed_hash) {
+        Ok(_) => Ok(create_token(conn, user).await?),
+        Err(_) => Err(UsersErrors::Unauthorized)
+    }
+
 }
 pub async fn register_user(conn:&PgPool,email:&str,pswdhash: &str) -> Result<String,UsersErrors> {
         match create_user(conn,email,pswdhash).await {
