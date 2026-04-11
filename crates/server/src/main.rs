@@ -177,7 +177,7 @@ async fn main() {
     )
     .await
     .expect("failed to connect to PostgreSQL");
-    let redis_pool = connect_redis("redis;//REDACTED_HOST:6379").await.expect("Failed to connect to redis");
+    let redis_pool = connect_redis("redis://REDACTED_HOST:6379").await.expect("Failed to connect to redis");
     let state = AppState::new(redis_pool,psql_pool);
     // Initialise the async executor that Leptos uses for SSR.
     let _ = any_spawner::Executor::init_tokio();
