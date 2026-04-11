@@ -53,6 +53,8 @@ struct CreateReq {
     max_views: i32,
     /// RFC-3339 / ISO-8601 timestamp
     expires_at: String,
+    /// JWT authentication token produced by /api/login or /api/register.
+    token: String,
 }
 
 /// POST /api/secrets/:id/fetch
@@ -85,6 +87,14 @@ struct FetchResp {
 pub enum Decrypted {
     Text(String),
     File { name: String, mime: String, bytes: Vec<u8> },
+}
+
+// ── Auth page mode ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthMode {
+    Login,
+    Register,
 }
 
 // ── WASM-only module ────────────────────────────────────────────────────────
@@ -178,6 +188,99 @@ mod client {
 
     // ── Network calls ────────────────────────────────────────────────────────
 
+    /// Read the JWT auth token from localStorage.
+    pub fn get_token() -> Option<String> {
+        web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item("ss_token").ok().flatten())
+    }
+
+    /// Store the JWT auth token in localStorage.
+    pub fn set_token(token: &str) {
+        if let Some(storage) = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+        {
+            let _ = storage.set_item("ss_token", token);
+        }
+    }
+
+    /// Remove the JWT auth token from localStorage.
+    pub fn clear_token() {
+        if let Some(storage) = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+        {
+            let _ = storage.remove_item("ss_token");
+        }
+    }
+
+    /// Perform a full-page navigation using the browser's location API.
+    pub fn navigate_to(path: &str) {
+        if let Some(window) = web_sys::window() {
+            let _ = window.location().set_href(path);
+        }
+    }
+
+    /// Authenticate with the server using email + plaintext password.
+    /// Returns the JWT token on success.
+    pub async fn api_login(email: &str, password: &str) -> Result<String, String> {
+        #[derive(Serialize)]
+        struct LoginReq<'a> {
+            email: &'a str,
+            passhash: &'a str,
+        }
+
+        let resp = Request::post("/api/login")
+            .json(&LoginReq { email, passhash: password })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+
+        if !resp.ok() {
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(if resp.status() == 401 {
+                "Invalid email or password.".to_string()
+            } else {
+                format!("Server error ({}): {msg}", resp.status())
+            });
+        }
+
+        resp.text().await.map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Register a new account.  The password is hashed with Argon2id
+    /// client-side before transmission so the server never sees the plaintext.
+    /// Returns the JWT token on success.
+    pub async fn api_register(email: &str, password: &str) -> Result<String, String> {
+        use crypto::hash_password;
+
+        #[derive(Serialize)]
+        struct RegisterReq {
+            email: String,
+            passhash: String,
+        }
+
+        let passhash = hash_password(password.as_bytes())?;
+
+        let resp = Request::post("/api/register")
+            .json(&RegisterReq { email: email.to_string(), passhash })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+
+        if !resp.ok() {
+            let msg = resp.text().await.unwrap_or_default();
+            return Err(match resp.status() {
+                // The backend currently returns 409 Conflict for duplicate email.
+                409 => "An account with this email already exists.".to_string(),
+                s => format!("Server error ({s}): {msg}"),
+            });
+        }
+
+        resp.text().await.map_err(|e| format!("parse error: {e}"))
+    }
+
     /// Encrypt a payload client-side and POST it to the server.
     ///
     /// Returns the full shareable URL including the key in the fragment.
@@ -187,6 +290,7 @@ mod client {
         max_views: i32,
         password: Option<String>,
         expiry_days: i64,
+        token: String,
     ) -> Result<String, String> {
         // 1. Prepend content-type header so we know how to display it later.
         let payload = wrap_payload(&kind, &data);
@@ -205,6 +309,7 @@ mod client {
             },
             max_views,
             expires_at: iso_in_days(expiry_days),
+            token,
         };
 
         let resp = Request::post("/api/secrets")
@@ -324,6 +429,7 @@ pub fn App() -> impl IntoView {
                         }
                     }>
                         <Route path=path!("/") view=CreatePage/>
+                        <Route path=path!("/auth") view=AuthPage/>
                         <Route path=path!("/s/:id") view=ViewPage/>
                     </Routes>
                 </div>
@@ -387,6 +493,15 @@ fn CreatePage() -> impl IntoView {
     // can read the selected File object when the form is submitted.
     let file_input_ref = NodeRef::<leptos::html::Input>::new();
 
+    // ── auth redirect ────────────────────────────────────────────────────────
+    // If no token is stored, redirect to the login/register page.
+    Effect::new(move |_: Option<()>| {
+        #[cfg(feature = "hydrate")]
+        if client::get_token().is_none() {
+            client::navigate_to("/auth");
+        }
+    });
+
     // ── derived ─────────────────────────────────────────────────────────────
     let effective_views = Memo::new(move |_| {
         if custom_views_on.get() {
@@ -431,18 +546,28 @@ leptos::task::spawn_local(async move {
             {
                 use client::create_secret;
                 use crypto::ContentType;
-                use wasm_bindgen::JsCast; // 👈 1. DODANY IMPORT
+                use wasm_bindgen::JsCast;
+
+                // Retrieve the stored auth token; redirect to login if missing.
+                let token = match client::get_token() {
+                    Some(t) => t,
+                    None => {
+                        client::navigate_to("/auth");
+                        set_loading.set(false);
+                        return;
+                    }
+                };
 
                 let result: Result<String, String> = match mode {
                     InputMode::Text => {
-                        create_secret(ContentType::Text, text.into_bytes(), mv, pass, days).await
+                        create_secret(ContentType::Text, text.into_bytes(), mv, pass, days, token).await
                     }
                     InputMode::File => {
                         // Grab the File from the <input type="file"> DOM node.
                         let maybe_file = fref
                             .get_untracked()
                             .as_deref()
-                            .and_then(|el| el.dyn_ref::<web_sys::HtmlInputElement>()) // 👈 2. DODANE RZUTOWANIE
+                            .and_then(|el| el.dyn_ref::<web_sys::HtmlInputElement>())
                             .and_then(|el| el.files())
                             .and_then(|list| list.get(0));
 
@@ -454,7 +579,7 @@ leptos::task::spawn_local(async move {
                                     if bytes.len() as u64 > 25*1024*1024{
                                         Err("File is too large! Maximum size for your plan is: 25MB".to_string())
                                     } else {
-                                    create_secret(ContentType::File { name, mime }, bytes, mv, pass, days)
+                                    create_secret(ContentType::File { name, mime }, bytes, mv, pass, days, token)
                                         .await
                                     }
                                 }
@@ -467,6 +592,17 @@ leptos::task::spawn_local(async move {
                     Ok(url) => {
                         set_generated_url.set(url);
                         set_step.set(CreateStep::Success);
+                    }
+                    // Quota exceeded
+                    Err(ref e) if e.contains("server error 401") && e.to_lowercase().contains("quota") => {
+                        set_error_msg.set(
+                            "You have reached your quota limit and cannot create any more secret links.".to_string()
+                        );
+                    }
+                    // Token invalid / expired – clear it and redirect to login
+                    Err(ref e) if e.contains("server error 401") => {
+                        client::clear_token();
+                        client::navigate_to("/auth");
                     }
                     Err(e) => set_error_msg.set(e),
                 }
@@ -1083,6 +1219,152 @@ fn ViewPage() -> impl IntoView {
                     </div>
                 }.into_any(),
             }}
+        </div>
+    }
+}
+
+// ── Auth page ─────────────────────────────────────────────────────────────────
+
+#[component]
+fn AuthPage() -> impl IntoView {
+    let (mode, set_mode) = signal(AuthMode::Login);
+    let (email, set_email) = signal(String::new());
+    let (password, set_password) = signal(String::new());
+    let (error_msg, set_error_msg) = signal(String::new());
+    let (loading, set_loading) = signal(false);
+
+    // If a valid token is already stored, redirect to the create page.
+    Effect::new(move |_: Option<()>| {
+        #[cfg(feature = "hydrate")]
+        if client::get_token().is_some() {
+            client::navigate_to("/");
+        }
+    });
+
+    let on_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        set_error_msg.set(String::new());
+
+        let email_val = email.get();
+        let pass_val = password.get();
+        let current_mode = mode.get();
+
+        if email_val.trim().is_empty() || pass_val.trim().is_empty() {
+            set_error_msg.set("Please enter both email and password.".to_string());
+            return;
+        }
+
+        set_loading.set(true);
+
+        leptos::task::spawn_local(async move {
+            #[cfg(feature = "hydrate")]
+            {
+                let result = match current_mode {
+                    AuthMode::Login => client::api_login(&email_val, &pass_val).await,
+                    AuthMode::Register => client::api_register(&email_val, &pass_val).await,
+                };
+
+                match result {
+                    Ok(token) => {
+                        client::set_token(&token);
+                        client::navigate_to("/");
+                    }
+                    Err(e) => set_error_msg.set(e),
+                }
+            }
+
+            #[cfg(not(feature = "hydrate"))]
+            {
+                let _ = (email_val, pass_val, current_mode);
+                set_error_msg.set("JavaScript is required.".to_string());
+            }
+
+            set_loading.set(false);
+        });
+    };
+
+    view! {
+        <div class="card">
+            <div class="card-header">
+                <h1>{move || match mode.get() {
+                    AuthMode::Login => "Sign in",
+                    AuthMode::Register => "Create account",
+                }}</h1>
+                <p>"You need an account to create secret links."</p>
+            </div>
+
+            <div class="mode-toggle" role="tablist">
+                <button
+                    role="tab" type="button" class="tab"
+                    class:active=move || mode.get() == AuthMode::Login
+                    on:click=move |_| {
+                        set_mode.set(AuthMode::Login);
+                        set_error_msg.set(String::new());
+                    }
+                >
+                    "Sign in"
+                </button>
+                <button
+                    role="tab" type="button" class="tab"
+                    class:active=move || mode.get() == AuthMode::Register
+                    on:click=move |_| {
+                        set_mode.set(AuthMode::Register);
+                        set_error_msg.set(String::new());
+                    }
+                >
+                    "Register"
+                </button>
+            </div>
+
+            <form on:submit=on_submit>
+                <div class="field">
+                    <label for="auth-email">"Email"</label>
+                    <input
+                        id="auth-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        autocomplete="email"
+                        prop:value=move || email.get()
+                        on:input=move |ev| set_email.set(event_target_value(&ev))
+                    />
+                </div>
+
+                <div class="field">
+                    <label for="auth-password">"Password"</label>
+                    <input
+                        id="auth-password"
+                        type="password"
+                        placeholder="Password"
+                        autocomplete=move || match mode.get() {
+                            AuthMode::Login => "current-password",
+                            AuthMode::Register => "new-password",
+                        }
+                        prop:value=move || password.get()
+                        on:input=move |ev| set_password.set(event_target_value(&ev))
+                    />
+                </div>
+
+                <Show when=move || !error_msg.get().is_empty()>
+                    <p class="submit-error" role="alert">
+                        {move || error_msg.get()}
+                    </p>
+                </Show>
+
+                <button
+                    type="submit"
+                    class="btn-primary"
+                    disabled=move || loading.get()
+                >
+                    {move || if loading.get() {
+                        "Please wait…"
+                    } else {
+                        match mode.get() {
+                            AuthMode::Login => "Sign in",
+                            AuthMode::Register => "Create account",
+                        }
+                    }}
+                </button>
+            </form>
         </div>
     }
 }
