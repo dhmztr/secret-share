@@ -138,6 +138,8 @@ pub async fn make_router(pool: AppState) -> Router {
         .route("/api/secrets/{id}/fetch", post(fetch_decrypt))
         .route("/api/secrets/{id}/meta", get(fetch_metadata))
         .route("/api/secrets/{id}/burn", post(burn))
+        .route("/api/login",post(login))
+        .route("/api/register",post(register))
         // ── Static assets ────────────────────────────────────────────────────
         .route("/health", get(health))
         .route("/style.css", get(serve_style))
