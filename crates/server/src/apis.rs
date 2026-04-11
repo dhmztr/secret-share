@@ -193,26 +193,44 @@ pub async fn burn(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn login(State(state): State<AppState>,email:&str,passhash:&str) -> Result<(StatusCode,String),(StatusCode,String)> {
-    if let Ok(token) = login_user(&state.postgres, email, passhash).await {
-        Ok((StatusCode::OK,token))
-    } else {
-        Err((StatusCode::UNAUTHORIZED,"Failed to login user".to_owned()))
-    }
-
+/// Request body for POST /api/login.
+#[derive(Deserialize)]
+pub struct LoginReq {
+    pub email: String,
+    pub passhash: String,
 }
 
-pub async fn register(State(state): State<AppState>,email:&str,passhash:&str) -> Result<(StatusCode,String),(StatusCode,String)> {
-    match register_user(&state.postgres,email,passhash).await {
-        Ok(val) => Ok((StatusCode::CREATED,val)),
+/// Request body for POST /api/register.
+#[derive(Deserialize)]
+pub struct RegisterReq {
+    pub email: String,
+    pub passhash: String,
+}
+
+pub async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<LoginReq>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    if let Ok(token) = login_user(&state.postgres, &req.email, &req.passhash).await {
+        Ok((StatusCode::OK, token))
+    } else {
+        Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned()))
+    }
+}
+
+pub async fn register(
+    State(state): State<AppState>,
+    Json(req): Json<RegisterReq>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    match register_user(&state.postgres, &req.email, &req.passhash).await {
+        Ok(val) => Ok((StatusCode::CREATED, val)),
         Err(e) => match e {
-            UsersErrors::TokenCreationFailed => 
+            UsersErrors::TokenCreationFailed =>
                 Err((StatusCode::INTERNAL_SERVER_ERROR,
                     "Failed to create user token".to_string())),
-            UsersErrors::Exists => Err((StatusCode::FOUND,"User already exists".to_owned())),
-            UsersErrors::ConnectionFailed => Err((StatusCode::INTERNAL_SERVER_ERROR,"Failed to connect to db".to_string())),
-                _ => unreachable!(),
-                
+            UsersErrors::Exists => Err((StatusCode::CONFLICT, "User already exists".to_owned())),
+            UsersErrors::ConnectionFailed => Err((StatusCode::INTERNAL_SERVER_ERROR, "Failed to connect to db".to_string())),
+            _ => unreachable!(),
         }
     }
 }

@@ -72,6 +72,8 @@ features = [
     "Navigator",
     "Clipboard",
     "Location",
+    # localStorage
+    "Storage",
     # File API
     "File",
     "FileList",
