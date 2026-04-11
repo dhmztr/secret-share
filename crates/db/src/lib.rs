@@ -266,9 +266,9 @@ pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<(),Use
     }
     let row = sqlx::query!(
     "INSERT INTO users
-        (email,password_hash) VALUES
-($1,$2) RETURNING id
-        ",email,password
+        (email,password_hash,quota_left) VALUES
+($1,$2,$3) RETURNING id
+        ",email,password,5
 ).fetch_one(conn).await;
     if let Ok(_) = row {
         Ok(())
