@@ -3,7 +3,6 @@ use serde::{Serialize,Deserialize};
 use redis::{AsyncCommands, ErrorKind, RedisError};
 use redis::aio::MultiplexedConnection;
 use crypto::Envelope;
-use sqlx::Error;
 use sqlx::{
     self,
     postgres::{PgPool,PgConnectOptions, PgPoolOptions},
@@ -30,7 +29,9 @@ pub struct SecretLink {
     created_at: DateTime<Utc>,
     haslo: Option<String>,
 }
-#[derive(Deserialize,Serialize)]
+#[derive(Deserialize,Serialize,Debug)]
+#[derive(sqlx::Type)]
+#[sqlx(type_name = "user_tier", rename_all= "lowercase")]
 pub enum UserTiers {
     Free,
     Premium,
@@ -42,6 +43,7 @@ pub enum SecretErrors {
     BadRequest,
     NotAuthenticated,
 }
+#[derive(Debug)]
 pub enum UsersErrors {
     Exists,
     DoesntExist,
@@ -266,14 +268,14 @@ pub async fn create_user(conn:&PgPool,email:&str,password:&str) -> Result<(),Use
     }
     let row = sqlx::query!(
     "INSERT INTO users
-        (email,password_hash,quota_left) VALUES
-($1,$2,$3) RETURNING id
-        ",email,password,5
+        (email,password_hash,tier ,quota_left) VALUES
+($1,$2,$3,$4) RETURNING id
+        ",email,password,UserTiers::Free as UserTiers, 5
 ).fetch_one(conn).await;
-    if let Ok(_) = row {
-        Ok(())
-    } else {
-        Err(UsersErrors::ConnectionFailed)
+    match row {
+        Ok(_) => Ok(()),
+        Err(e) => { eprintln!("Error! : {:#?}",e);
+            Err(UsersErrors::ConnectionFailed)}
     }
 }
 pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<User,UsersErrors> {
@@ -281,13 +283,13 @@ pub async fn fetch_user(conn:&PgPool,email:&str) -> Result<User,UsersErrors> {
         Err(UsersErrors::DoesntExist)
     } else {
     let row= sqlx::query!(
-    "SELECT password_hash,tier,quota_left FROM users WHERE email = $1",email
+    r#"SELECT password_hash,tier as "tier: UserTiers",quota_left FROM users WHERE email = $1"#,email
 ).fetch_one(conn).await;
         match row {
             Ok(user_data) => Ok(User {
                 email:email.to_string(),
                 password_hash:user_data.password_hash,
-                tier:UserTiers::from(user_data.tier.as_str()),
+                tier:UserTiers::from(user_data.tier),
                 quota_left:user_data.quota_left
 
             }),
@@ -311,6 +313,8 @@ pub async fn fetch_password(conn:&PgPool,email:&str) -> Result<String,sqlx::Erro
 }
 #[cfg(test)]
 mod tests {
+    use argon2::{Argon2, PasswordHasher,password_hash::{SaltString, rand_core::OsRng}};
+
     use super::*;
 
     #[tokio::test]
@@ -333,6 +337,26 @@ mod tests {
         Err(ref r) => {eprintln!("error!!: {}",r); assert!(result.is_ok())}
     }
     }
+    #[tokio::test] 
+    pub async fn try_create() {
+        let result = connect_postgres(
+            "REDACTED_USER",
+            "REDACTED_PASSWORD",
+            5432,
+            "REDACTED_HOST",
+            "secret_share",
+        ).await.unwrap();
+        let argon2 = Argon2::default();
+        let passwd = argon2.hash_password(b"123",&SaltString::generate(&mut OsRng)).unwrap().to_string();
 
+        let rslt = create_user(&result, "test@adres.pl", &passwd).await;
+        match rslt {
+            Ok(_) => assert!(rslt.is_ok()),
+            Err(ref e) => eprintln!("Error!: {:#?}",e)
+        }
+        assert!(rslt.is_ok())
+    }
 }
+
+
 
