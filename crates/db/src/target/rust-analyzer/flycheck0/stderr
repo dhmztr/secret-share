@@ -1,22 +1,158 @@
-   0.142217698s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint: stale: changed "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs"
-   0.142231464s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:           (vs) "/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-4b5150603eb6b4d4/dep-lib-db"
-   0.142234409s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1775921444, nanos: 347167098 } < FileTime { seconds: 1775921445, nanos: 557848920 }
-   0.142694377s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint: fingerprint dirty for auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("auth", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth/src/lib.rs", Edition2024) }
-   0.142707371s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "db" })
-   0.144423543s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint: fingerprint dirty for db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("db", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", Edition2024) }
-   0.144431417s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-4b5150603eb6b4d4/dep-lib-db", reference_mtime: FileTime { seconds: 1775921444, nanos: 347167098 }, stale: "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", stale_mtime: FileTime { seconds: 1775921445, nanos: 557848920 } }))
-   0.147971040s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint: fingerprint dirty for auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("auth", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth/src/lib.rs", Edition2024) }
-   0.147979195s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "db" })
-   0.148524061s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint: stale: changed "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs"
-   0.148528129s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:           (vs) "/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-f2567307d4196561/dep-test-lib-db"
-   0.148530363s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1775921444, nanos: 348685453 } < FileTime { seconds: 1775921445, nanos: 557848920 }
-   0.148549639s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint: fingerprint dirty for db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("db", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", Edition2024) }
-   0.148554428s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-f2567307d4196561/dep-test-lib-db", reference_mtime: FileTime { seconds: 1775921444, nanos: 348685453 }, stale: "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", stale_mtime: FileTime { seconds: 1775921445, nanos: 557848920 } }))
-   0.155234918s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint: fingerprint dirty for server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server)/Check { test: false }/TargetInner { name: "server", doc: true, ..: with_path("/home/dhm/cybersec/programowanie/rust/secret-share/crates/server/src/main.rs", Edition2024) }
-   0.155248714s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "auth" })
-   0.156485561s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint: fingerprint dirty for server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server)/Check { test: true }/TargetInner { name: "server", doc: true, ..: with_path("/home/dhm/cybersec/programowanie/rust/secret-share/crates/server/src/main.rs", Edition2024) }
-   0.156493035s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "auth" })
+   0.168883182s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint: fingerprint error for auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("auth", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth/src/lib.rs", Edition2024) }
+   0.168909080s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/auth-6bd3eed564425322/lib-auth`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::build_runner::BuildRunner::compile
+   5: cargo::ops::cargo_compile::compile_ws
+   6: cargo::ops::cargo_compile::compile_with_exec
+   7: cargo::ops::cargo_compile::compile
+   8: cargo::commands::check::exec
+   9: cargo::cli::Exec::exec
+  10: cargo::cli::main
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace
+  13: std::rt::lang_start::{{closure}}
+  14: std::rt::lang_start_internal
+  15: main
+  16: __libc_start_call_main
+  17: __libc_start_main@@GLIBC_2.34
+  18: _start
+   0.175282651s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint: fingerprint error for db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("db", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", Edition2024) }
+   0.175295535s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-1c710c6c8b9a8232/lib-db`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::compile
+   5: cargo::core::compiler::build_runner::BuildRunner::compile
+   6: cargo::ops::cargo_compile::compile_ws
+   7: cargo::ops::cargo_compile::compile_with_exec
+   8: cargo::ops::cargo_compile::compile
+   9: cargo::commands::check::exec
+  10: cargo::cli::Exec::exec
+  11: cargo::cli::main
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace
+  14: std::rt::lang_start::{{closure}}
+  15: std::rt::lang_start_internal
+  16: main
+  17: __libc_start_call_main
+  18: __libc_start_main@@GLIBC_2.34
+  19: _start
+   0.183228850s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint: fingerprint error for auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("auth", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth/src/lib.rs", Edition2024) }
+   0.183249177s  INFO prepare_target{force=false package_id=auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth) target="auth"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/auth-69a9476166d906b5/test-lib-auth`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::build_runner::BuildRunner::compile
+   5: cargo::ops::cargo_compile::compile_ws
+   6: cargo::ops::cargo_compile::compile_with_exec
+   7: cargo::ops::cargo_compile::compile
+   8: cargo::commands::check::exec
+   9: cargo::cli::Exec::exec
+  10: cargo::cli::main
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace
+  13: std::rt::lang_start::{{closure}}
+  14: std::rt::lang_start_internal
+  15: main
+  16: __libc_start_call_main
+  17: __libc_start_main@@GLIBC_2.34
+  18: _start
+   0.184317055s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint: fingerprint error for db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("db", ["lib"], "/home/dhm/cybersec/programowanie/rust/secret-share/crates/db/src/lib.rs", Edition2024) }
+   0.184324198s  INFO prepare_target{force=false package_id=db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db) target="db"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/db-6b97ebc2e2d891e1/test-lib-db`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::build_runner::BuildRunner::compile
+   5: cargo::ops::cargo_compile::compile_ws
+   6: cargo::ops::cargo_compile::compile_with_exec
+   7: cargo::ops::cargo_compile::compile
+   8: cargo::commands::check::exec
+   9: cargo::cli::Exec::exec
+  10: cargo::cli::main
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace
+  13: std::rt::lang_start::{{closure}}
+  14: std::rt::lang_start_internal
+  15: main
+  16: __libc_start_call_main
+  17: __libc_start_main@@GLIBC_2.34
+  18: _start
+   0.195205694s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint: fingerprint error for server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server)/Check { test: false }/TargetInner { name: "server", doc: true, ..: with_path("/home/dhm/cybersec/programowanie/rust/secret-share/crates/server/src/main.rs", Edition2024) }
+   0.195216574s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/server-d06e37d742930601/bin-server`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::build_runner::BuildRunner::compile
+   5: cargo::ops::cargo_compile::compile_ws
+   6: cargo::ops::cargo_compile::compile_with_exec
+   7: cargo::ops::cargo_compile::compile
+   8: cargo::commands::check::exec
+   9: cargo::cli::Exec::exec
+  10: cargo::cli::main
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace
+  13: std::rt::lang_start::{{closure}}
+  14: std::rt::lang_start_internal
+  15: main
+  16: __libc_start_call_main
+  17: __libc_start_main@@GLIBC_2.34
+  18: _start
+   0.196563385s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint: fingerprint error for server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server)/Check { test: true }/TargetInner { name: "server", doc: true, ..: with_path("/home/dhm/cybersec/programowanie/rust/secret-share/crates/server/src/main.rs", Edition2024) }
+   0.196570047s  INFO prepare_target{force=false package_id=server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server) target="server"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/dhm/cybersec/programowanie/rust/secret-share/target/debug/.fingerprint/server-c417857706a451d7/test-bin-server`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <E as anyhow::context::ext::StdError>::ext_context
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::prepare_target
+   3: cargo::core::compiler::compile
+   4: cargo::core::compiler::build_runner::BuildRunner::compile
+   5: cargo::ops::cargo_compile::compile_ws
+   6: cargo::ops::cargo_compile::compile_with_exec
+   7: cargo::ops::cargo_compile::compile
+   8: cargo::commands::check::exec
+   9: cargo::cli::Exec::exec
+  10: cargo::cli::main
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace
+  13: std::rt::lang_start::{{closure}}
+  14: std::rt::lang_start_internal
+  15: main
+  16: __libc_start_call_main
+  17: __libc_start_main@@GLIBC_2.34
+  18: _start
     Checking db v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/db)
-    Checking auth v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/auth)
-    Checking server v0.1.0 (/home/dhm/cybersec/programowanie/rust/secret-share/crates/server)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.53s

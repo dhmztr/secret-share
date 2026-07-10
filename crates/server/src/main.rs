@@ -168,16 +168,20 @@ async fn main() {
         .parse()
         .expect("LEPTOS_SITE_ADDR is not a valid socket address");
 
-    let psql_pool = connect_postgres(
-        "REDACTED_USER",
-        "REDACTED_PASSWORD",
-        5432,
-        "REDACTED_HOST",
-        "secret_share",
-    )
-    .await
-    .expect("failed to connect to PostgreSQL");
-    let redis_pool = connect_redis("redis://REDACTED_HOST:6379").await.expect("Failed to connect to redis");
+    let db_user     = std::env::var("DB_USER").expect("DB_USER must be set");
+    let db_password = std::env::var("DB_PASSWORD").expect("DB_PASSWORD must be set");
+    let db_host     = std::env::var("DB_HOST").expect("DB_HOST must be set");
+    let db_port: u16 = std::env::var("DB_PORT")
+        .unwrap_or_else(|_| "5432".to_string())
+        .parse()
+        .expect("DB_PORT must be a valid port number");
+    let db_name     = std::env::var("DB_NAME").expect("DB_NAME must be set");
+    let redis_url   = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
+
+    let psql_pool = connect_postgres(&db_user, &db_password, db_port, &db_host, &db_name)
+        .await
+        .expect("failed to connect to PostgreSQL");
+    let redis_pool = connect_redis(&redis_url).await.expect("Failed to connect to redis");
     let state = AppState::new(redis_pool,psql_pool);
     // Initialise the async executor that Leptos uses for SSR.
     let _ = any_spawner::Executor::init_tokio();

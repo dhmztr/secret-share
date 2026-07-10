@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE secrets\n        SET view_count = view_count + 1\n        WHERE secret_id = $1\n          AND burned_at IS NULL\n          AND expires_at >= NOW()\n          AND view_count < max_views\n        RETURNING nonce, ciphertext\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "ciphertext",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e6490b2b9ae49633df94244692b2e7e9aebc3b695d7a83e4e9e5d4eacf973fd8"
+}

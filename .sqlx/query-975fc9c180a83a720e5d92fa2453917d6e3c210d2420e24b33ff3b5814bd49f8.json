@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE secrets SET burned_at = $1 WHERE secret_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "975fc9c180a83a720e5d92fa2453917d6e3c210d2420e24b33ff3b5814bd49f8"
+}

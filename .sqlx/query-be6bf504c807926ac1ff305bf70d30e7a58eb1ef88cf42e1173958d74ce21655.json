@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT password_hash,tier as \"tier: UserTiers\",quota_left FROM users WHERE email = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "password_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "tier: UserTiers",
+        "type_info": {
+          "Custom": {
+            "name": "user_tier",
+            "kind": {
+              "Enum": [
+                "free",
+                "premium",
+                "enterprise"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "quota_left",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "be6bf504c807926ac1ff305bf70d30e7a58eb1ef88cf42e1173958d74ce21655"
+}

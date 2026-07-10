@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users\n        (email,password_hash,tier ,quota_left) VALUES\n($1,$2,$3,$4) RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        {
+          "Custom": {
+            "name": "user_tier",
+            "kind": {
+              "Enum": [
+                "free",
+                "premium",
+                "enterprise"
+              ]
+            }
+          }
+        },
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2ef9ab0e0d3fef979e159e3a12c2a2946222aa5f4b1574dce0d1a37986ecb8d5"
+}
