@@ -270,7 +270,6 @@ footer {
     padding-top: 2rem;
 }
 
-/* ── Loading spinner ─────────────────────────────────────────────────────── */
 
 .secret-loading {
     display: flex;
@@ -297,7 +296,6 @@ footer {
     }
 }
 
-/* ── Error card ──────────────────────────────────────────────────────────── */
 
 .error-card {
     text-align: center;
@@ -310,7 +308,6 @@ footer {
     color: #f87171;
 }
 
-/* ── File input ──────────────────────────────────────────────────────────── */
 
 .file-input {
     width: 100%;
@@ -329,7 +326,6 @@ footer {
     color: #e2e4f0;
 }
 
-/* ── File download widget ────────────────────────────────────────────────── */
 
 .file-download {
     display: flex;
@@ -376,7 +372,6 @@ footer {
     text-align: center;
 }
 
-/* ── Logo link ───────────────────────────────────────────────────────────── */
 
 .logo a {
     color: inherit;

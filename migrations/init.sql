@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT         NOT NULL UNIQUE,
     password_hash TEXT         NOT NULL,
     tier          user_tier    NOT NULL DEFAULT 'free',
-    quota_left    INTEGER      NOT NULL DEFAULT 5
+    quota_left    INTEGER      NOT NULL DEFAULT 5,
+    verified_at   TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS secrets (

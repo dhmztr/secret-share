@@ -7,6 +7,7 @@ edition = "2024"
 any_spawner = "0.3.0"
 axum = { version = "0.8.8", features = ["macros"] }
 chrono = { version = "0.4.44", features = ["serde"] }
+dotenvy = "0.15.7"
 db = { path = "../db" }
 auth = { path = "../auth" }
 crypto = { path = "../crypto" }
@@ -20,6 +21,8 @@ tokio = { version = "1.50.0", features = ["full"] }
 tower-http = { version = "0.6", features = ["fs"] }
 uuid = { version = "1.23.0", features = ["serde"] }
 redis = { version = "1.2.0", features = ["tokio-comp"] }
+axum-governor = "2.0.3"
+ipnet = "2.12.0"
 [features]
 default = []
 ssr = [

@@ -7,6 +7,7 @@ use sqlx::{
     self,
     postgres::{PgConnectOptions, PgPool, PgPoolOptions},
 };
+use subtle::ConstantTimeEq;
 #[derive(Serialize, Deserialize)]
 pub struct User {
     pub email: String,
@@ -16,6 +17,19 @@ pub struct User {
 }
 use uuid::Uuid;
 const VERSION: i16 = 1;
+
+const VERIFY_CODE_PREFIX: &str = "verify:code:";
+const VERIFY_ATTEMPTS_PREFIX: &str = "verify:attempts:";
+const VERIFY_TTL_SECS: i64 = 900;
+const VERIFY_MAX_ATTEMPTS: i64 = 5;
+
+pub enum VerifyOutcome {
+    Ok,
+    WrongCode,
+    TooManyAttempts,
+    Expired,
+}
+
 pub struct SecretLink {
     v: i16,
     nonce: Vec<u8>,
@@ -103,10 +117,23 @@ pub async fn connect_redis(
 }
 pub async fn redis_process_quota(
     mut conn: MultiplexedConnection,
+    pg: &PgPool,
     email: &str,
-) -> Result<i32, RedisError> {
-    let new_val: i32 = conn.decr(email, 1).await?;
-    Ok(new_val)
+) -> Result<i32, UsersErrors> {
+    let exists: bool = conn
+        .exists(email)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    if !exists {
+        let user = fetch_user(pg, email).await?;
+        let _: bool = conn
+            .set_nx(email, user.quota_left)
+            .await
+            .map_err(|_| UsersErrors::ConnectionFailed)?;
+    }
+    conn.decr(email, 1)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)
 }
 
 pub async fn redis_set_quota_data(
@@ -122,13 +149,67 @@ pub async fn redis_set_quota_data(
         })?;
     Ok(user.quota_left)
 }
+
+pub async fn store_verify_code(
+    mut conn: MultiplexedConnection,
+    email: &str,
+    code: &str,
+) -> Result<(), UsersErrors> {
+    let key = format!("{VERIFY_CODE_PREFIX}{email}");
+    let akey = format!("{VERIFY_ATTEMPTS_PREFIX}{email}");
+    conn.set_ex::<_, _, ()>(&key, code, VERIFY_TTL_SECS as u64)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    conn.set_ex::<_, _, ()>(&akey, 0, VERIFY_TTL_SECS as u64)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    Ok(())
+}
+
+pub async fn check_verify_code(
+    mut conn: MultiplexedConnection,
+    email: &str,
+    submitted: &str,
+) -> Result<VerifyOutcome, UsersErrors> {
+    let key = format!("{VERIFY_CODE_PREFIX}{email}");
+    let akey = format!("{VERIFY_ATTEMPTS_PREFIX}{email}");
+    let attempts: i64 = conn
+        .incr(&akey, 1)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    let _: bool = conn
+        .expire(&akey, VERIFY_TTL_SECS)
+        .await
+        .unwrap_or(false);
+    if attempts > VERIFY_MAX_ATTEMPTS {
+        return Ok(VerifyOutcome::TooManyAttempts);
+    }
+    let stored: Option<String> = conn
+        .get(&key)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    match stored {
+        None => Ok(VerifyOutcome::Expired),
+        Some(code) => {
+            if code.as_bytes().ct_eq(submitted.as_bytes()).into() {
+                let _: () = conn.del::<_, ()>(&[&key, &akey]).await.unwrap_or(());
+                Ok(VerifyOutcome::Ok)
+            } else {
+                Ok(VerifyOutcome::WrongCode)
+            }
+        }
+    }
+}
 pub async fn redis_synchronize_quota(
     mut conn: (&PgPool, MultiplexedConnection),
 ) -> Result<(), RedisError> {
     let mut conn_get = conn.1.clone();
     let mut redisiter: redis::AsyncIter<String> = conn.1.scan().await?;
     while let Some(key) = redisiter.next_item().await {
-        let key_string = key?.clone();
+        let Ok(key_string) = key else { continue; };
+        if key_string.starts_with("verify:") {
+            continue;
+        }
         let val: Option<i32> = conn_get.get(&key_string).await?;
         match val {
             Some(numer) => {
@@ -140,11 +221,11 @@ pub async fn redis_synchronize_quota(
                 .execute(conn.0)
                 .await
                 .map_err(|e| {
-                    eprintln!("Błąd SQLx: {}", e);
+                    eprintln!("SQLx error: {}", e);
 
                     RedisError::from((
                         ErrorKind::Server(redis::ServerErrorKind::ResponseError),
-                        "Nie udało się zaktualizować bazy danych",
+                        "Failed to update database",
                     ))
                 })?;
             }
@@ -255,21 +336,22 @@ pub async fn burn_secret(
     conn: &sqlx::Pool<sqlx::Postgres>,
     secret_id: Uuid,
 ) -> Result<String, SecretErrors> {
-    match sqlx::query_scalar!(
-        "UPDATE secrets SET burned_at = $1 WHERE secret_id = $2",
-        Utc::now(),
-        secret_id
-    )
-    .fetch_one(conn)
-    .await
-    {
-        Ok(_) => Ok(String::from("Ok")),
-        Err(_) => Err(SecretErrors::ConnectionFailed),
+    let result = sqlx::query("UPDATE secrets SET burned_at = $1 WHERE secret_id = $2")
+        .bind(Utc::now())
+        .bind(secret_id)
+        .execute(conn)
+        .await
+        .map_err(|_| SecretErrors::ConnectionFailed)?;
+
+    if result.rows_affected() == 0 {
+        Err(SecretErrors::Expired)
+    } else {
+        Ok(String::from("Ok"))
     }
 }
 
 pub async fn create_user(conn: &PgPool, email: &str, password: &str) -> Result<(), UsersErrors> {
-    if email_exists(conn, email).await.unwrap() {
+    if email_exists(conn, email).await.map_err(|_| UsersErrors::ConnectionFailed)? {
         return Err(UsersErrors::Exists);
     }
     let row = sqlx::query!(
@@ -293,7 +375,7 @@ pub async fn create_user(conn: &PgPool, email: &str, password: &str) -> Result<(
     }
 }
 pub async fn fetch_user(conn: &PgPool, email: &str) -> Result<User, UsersErrors> {
-    if !email_exists(conn, email).await.unwrap() {
+    if !email_exists(conn, email).await.map_err(|_| UsersErrors::ConnectionFailed)? {
         Err(UsersErrors::DoesntExist)
     } else {
         let row= sqlx::query!(
@@ -316,6 +398,26 @@ pub async fn email_exists(conn: &PgPool, email: &str) -> Result<bool, sqlx::Erro
         .fetch_one(conn)
         .await?;
     Ok(exists.unwrap_or(false))
+}
+
+pub async fn set_verified(conn: &PgPool, email: &str) -> Result<(), UsersErrors> {
+    sqlx::query("UPDATE users SET verified_at = NOW() WHERE email = $1")
+        .bind(email)
+        .execute(conn)
+        .await
+        .map(|_| ())
+        .map_err(|_| UsersErrors::ConnectionFailed)
+}
+
+pub async fn is_verified(conn: &PgPool, email: &str) -> Result<bool, UsersErrors> {
+    let row: Option<bool> = sqlx::query_scalar(
+        "SELECT verified_at IS NOT NULL FROM users WHERE email = $1",
+    )
+    .bind(email)
+    .fetch_optional(conn)
+    .await
+    .map_err(|_| UsersErrors::ConnectionFailed)?;
+    row.ok_or(UsersErrors::DoesntExist)
 }
 pub async fn fetch_password(conn: &PgPool, email: &str) -> Result<String, sqlx::Error> {
     let passwd = sqlx::query_scalar!("SELECT password_hash FROM users WHERE email=$1", email)

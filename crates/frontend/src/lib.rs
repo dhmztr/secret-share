@@ -1,19 +1,3 @@
-//! SecretShare frontend.
-//!
-//! Compiled twice by cargo-leptos:
-//!   1. `--features ssr`     → linked into the server binary for SSR rendering
-//!   2. `--features hydrate` → compiled to WASM; loaded by the browser to take
-//!                             over reactivity after the initial HTML arrives
-//!
-//! Security model
-//! ──────────────
-//! • The encryption key **never leaves the browser** – it is embedded in the
-//!   URL fragment (`#<base64url-key>`) which browsers never send to the server.
-//! • Content-type metadata (text vs. file + filename) is embedded inside the
-//!   plaintext before encryption via `crypto::wrap_payload`, so the server
-//!   stores only opaque ciphertext and learns nothing about the payload type.
-//! • Password hashing (Argon2id) is performed **client-side** inside the WASM
-//!   bundle; the server only ever sees and stores the PHC hash string.
 
 use leptos::prelude::*;
 use leptos_router::components::{A, Route, Router, Routes};
@@ -21,12 +5,10 @@ use leptos_router::hooks::use_params_map;
 use leptos_router::path;
 use serde::{Deserialize, Serialize};
 
-// ── Embedded static assets (used by the server to serve /style.css etc.) ──
 
 pub const STYLES: &str = include_str!("styles.css");
 pub const FAVICON: &str = include_str!("favicon.svg");
 
-// ── WASM entry-point ───────────────────────────────────────────────────────
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -34,38 +16,27 @@ pub fn hydrate() {
     leptos::mount::hydrate_body(App);
 }
 
-// ── Shared API types (serialised to/from JSON) ─────────────────────────────
 
-/// Mirror of `crypto::Envelope` – kept here so we do not pull the full crypto
-/// crate into the SSR build (it is an optional dep on the hydrate feature).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ApiEnvelope {
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
-    /// Argon2 PHC hash produced client-side; `None` → no passphrase.
     password: Option<String>,
 }
 
-/// POST /api/secrets
 #[derive(Serialize, Clone, Debug)]
 struct CreateReq {
     env: ApiEnvelope,
     max_views: i32,
-    /// RFC-3339 / ISO-8601 timestamp
     expires_at: String,
-    /// JWT authentication token produced by /api/login or /api/register.
     token: String,
 }
 
-/// POST /api/secrets/:id/fetch
 #[derive(Serialize, Clone, Debug)]
 struct FetchReq {
-    /// Plain-text password entered by the viewer; the server compares it
-    /// against the Argon2 hash stored at creation time.
     password: Option<String>,
 }
 
-/// GET /api/secrets/:id/meta  →  response body
 #[derive(Deserialize, Clone, Debug)]
 struct MetaResp {
     password_required: bool,
@@ -73,36 +44,27 @@ struct MetaResp {
     burned: bool,
 }
 
-/// POST /api/secrets/:id/fetch  →  response body
 #[derive(Deserialize, Clone, Debug)]
 struct FetchResp {
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
 }
 
-// ── Decrypted payload (lives only in the browser, never serialised) ─────────
 
-/// What the frontend holds after successful decryption.
 #[derive(Clone, Debug)]
 pub enum Decrypted {
     Text(String),
     File { name: String, mime: String, bytes: Vec<u8> },
 }
 
-// ── Auth page mode ────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AuthMode {
     Login,
     Register,
+    Verify,
 }
 
-// ── WASM-only module ────────────────────────────────────────────────────────
-//
-// Everything that touches the DOM, the network, or the crypto crate lives
-// here behind `#[cfg(feature = "hydrate")]`.  The SSR build never compiles
-// this code, so it cannot accidentally run crypto or network calls on the
-// server.
 
 #[cfg(feature = "hydrate")]
 mod client {
@@ -114,7 +76,6 @@ mod client {
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
 
-    // ── Key encoding ────────────────────────────────────────────────────────
 
     pub fn encode_key(bytes: &[u8]) -> String {
         URL_SAFE_NO_PAD.encode(bytes)
@@ -126,10 +87,7 @@ mod client {
             .map_err(|e| format!("key decode error: {e}"))
     }
 
-    // ── Time helpers ────────────────────────────────────────────────────────
 
-    /// Return an ISO-8601 string `days` days from now, using `js_sys::Date`
-    /// (the only reliable clock inside a WASM module).
     pub fn iso_in_days(days: i64) -> String {
         let now_ms = Date::now();
         let future_ms = now_ms + (days as f64) * 86_400_000.0;
@@ -139,7 +97,6 @@ mod client {
             .unwrap_or_else(|| "2099-01-01T00:00:00.000Z".to_string())
     }
 
-    // ── Browser helpers ─────────────────────────────────────────────────────
 
     pub fn origin() -> String {
         web_sys::window()
@@ -153,10 +110,8 @@ mod client {
             .unwrap_or_default()
     }
 
-    /// Read a `File` object from the browser's File API into a `Vec<u8>`.
     pub async fn read_file_bytes(file: &web_sys::File) -> Result<(String, String, Vec<u8>), String> {
         let name = file.name();
-        // file.type_() returns the MIME string (may be empty)
         let mime = file.type_();
         let promise = file.array_buffer();
         let buf = JsFuture::from(promise)
@@ -166,8 +121,6 @@ mod client {
         Ok((name, mime, arr.to_vec()))
     }
 
-    /// Create a temporary object URL for a `Vec<u8>` so the browser can
-    /// download it as a file.
     pub fn make_blob_url(bytes: &[u8], mime: &str) -> Result<String, String> {
         use js_sys::{Array, Uint8Array};
         use web_sys::{Blob, BlobPropertyBag};
@@ -186,16 +139,13 @@ mod client {
             .map_err(|e| format!("object-url error: {e:?}"))
     }
 
-    // ── Network calls ────────────────────────────────────────────────────────
 
-    /// Read the JWT auth token from localStorage.
     pub fn get_token() -> Option<String> {
         web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
             .and_then(|s| s.get_item("ss_token").ok().flatten())
     }
 
-    /// Store the JWT auth token in localStorage.
     pub fn set_token(token: &str) {
         if let Some(storage) = web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
@@ -204,7 +154,6 @@ mod client {
         }
     }
 
-    /// Remove the JWT auth token from localStorage.
     pub fn clear_token() {
         if let Some(storage) = web_sys::window()
             .and_then(|w| w.local_storage().ok().flatten())
@@ -213,15 +162,12 @@ mod client {
         }
     }
 
-    /// Perform a full-page navigation using the browser's location API.
     pub fn navigate_to(path: &str) {
         if let Some(window) = web_sys::window() {
             let _ = window.location().set_href(path);
         }
     }
 
-    /// Authenticate with the server using email + plaintext password.
-    /// Returns the JWT token on success.
     pub async fn api_login(email: &str, password: &str) -> Result<String, String> {
         #[derive(Serialize)]
         struct LoginReq<'a> {
@@ -248,9 +194,6 @@ mod client {
         resp.text().await.map_err(|e| format!("parse error: {e}"))
     }
 
-    /// Register a new account.  The password is hashed with Argon2id
-    /// client-side before transmission so the server never sees the plaintext.
-    /// Returns the JWT token on success.
     pub async fn api_register(email: &str, password: &str) -> Result<String, String> {
         use crypto::hash_password;
 
@@ -272,7 +215,6 @@ mod client {
         if !resp.ok() {
             let msg = resp.text().await.unwrap_or_default();
             return Err(match resp.status() {
-                // The backend currently returns 409 Conflict for duplicate email.
                 409 => "An account with this email already exists.".to_string(),
                 s => format!("Server error ({s}): {msg}"),
             });
@@ -281,9 +223,47 @@ mod client {
         resp.text().await.map_err(|e| format!("parse error: {e}"))
     }
 
-    /// Encrypt a payload client-side and POST it to the server.
-    ///
-    /// Returns the full shareable URL including the key in the fragment.
+    pub async fn api_verify(email: &str, code: &str) -> Result<(), String> {
+        #[derive(Serialize)]
+        struct V<'a> {
+            email: &'a str,
+            code: &'a str,
+        }
+        let resp = Request::post("/api/verify")
+            .json(&V { email, code })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+        if resp.ok() {
+            return Ok(());
+        }
+        Err(match resp.status() {
+            401 => "Incorrect code.".into(),
+            410 => "Code expired. Request a new one.".into(),
+            429 => "Too many attempts. Request a new code.".into(),
+            s => format!("Server error ({s})"),
+        })
+    }
+
+    pub async fn api_resend(email: &str) -> Result<(), String> {
+        #[derive(Serialize)]
+        struct R<'a> {
+            email: &'a str,
+        }
+        let resp = Request::post("/api/resend")
+            .json(&R { email })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+        if resp.ok() {
+            Ok(())
+        } else {
+            Err("Could not resend code.".into())
+        }
+    }
+
     pub async fn create_secret(
         kind: ContentType,
         data: Vec<u8>,
@@ -292,15 +272,11 @@ mod client {
         expiry_days: i64,
         token: String,
     ) -> Result<String, String> {
-        // 1. Prepend content-type header so we know how to display it later.
         let payload = wrap_payload(&kind, &data);
 
-        // 2. Encrypt (and optionally hash the password) – both happen here,
-        //    inside the browser, never on the server.
         let pass_bytes = password.as_deref().map(str::as_bytes);
         let (env, key) = encrypt(&payload, pass_bytes)?;
 
-        // 3. Build the JSON envelope that the server will store.
         let body = CreateReq {
             env: ApiEnvelope {
                 nonce: env.nonce,
@@ -324,14 +300,11 @@ mod client {
             return Err(format!("server error {}: {msg}", resp.status()));
         }
 
-        // Server responds with the UUID as a JSON string.
         let uuid: String = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
 
-        // 4. Embed the key in the fragment – it is never sent to the server.
         Ok(format!("{}/s/{uuid}#{}", origin(), encode_key(&key)))
     }
 
-    /// Fetch metadata for a secret without consuming a view.
     pub async fn get_meta(id: &str) -> Result<MetaResp, String> {
         let resp = Request::get(&format!("/api/secrets/{id}/meta"))
             .send()
@@ -353,12 +326,6 @@ mod client {
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    /// Consume one view, retrieve the ciphertext, and decrypt it locally.
-    ///
-    /// Returns a special sentinel string on known error conditions so the
-    /// caller can show the right UI state:
-    ///   `"wrong_password"` – Argon2 verification failed (HTTP 401)
-    ///   `"expired"`        – view limit / expiry reached  (HTTP 410)
     pub async fn fetch_and_decrypt(
         id: &str,
         key_b64: &str,
@@ -385,10 +352,8 @@ mod client {
 
         let data: FetchResp = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
 
-        // Decrypt fully client-side – the server never sees the key.
         let plaintext = decrypt(&key, &data.nonce, &data.ciphertext)?;
 
-        // Unwrap the content-type header we prepended before encrypting.
         let (kind, content) = unwrap_payload(&plaintext)?;
 
         match kind {
@@ -406,7 +371,6 @@ mod client {
     }
 }
 
-// ── App root ────────────────────────────────────────────────────────────────
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -444,7 +408,6 @@ pub fn App() -> impl IntoView {
     }
 }
 
-// ── Create page ─────────────────────────────────────────────────────────────
 
 const VIEW_OPTIONS: [(u32, &str); 4] = [(1, "Once"), (5, "5×"), (10, "10×"), (25, "25×")];
 const EXPIRY_OPTIONS: [(i64, &str); 4] = [
@@ -468,13 +431,10 @@ enum CreateStep {
 
 #[component]
 fn CreatePage() -> impl IntoView {
-    // ── step ────────────────────────────────────────────────────────────────
     let (step, set_step) = signal(CreateStep::Form);
 
-    // ── form state ──────────────────────────────────────────────────────────
     let (input_mode, set_input_mode) = signal(InputMode::Text);
     let (text_value, set_text_value) = signal(String::new());
-    // Display-only filename shown below the <input type="file">
     let (selected_file_name, set_selected_file_name) = signal(String::new());
     let (max_views, set_max_views) = signal(1_u32);
     let (custom_views_on, set_custom_views_on) = signal(false);
@@ -483,18 +443,13 @@ fn CreatePage() -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (expiry_days, set_expiry_days) = signal(7_i64);
 
-    // ── result / feedback ───────────────────────────────────────────────────
     let (generated_url, set_generated_url) = signal(String::new());
     let (copied, set_copied) = signal(false);
     let (error_msg, set_error_msg) = signal(String::new());
     let (loading, set_loading) = signal(false);
 
-    // NodeRef gives us access to the <input type="file"> DOM element so we
-    // can read the selected File object when the form is submitted.
     let file_input_ref = NodeRef::<leptos::html::Input>::new();
 
-    // ── auth redirect ────────────────────────────────────────────────────────
-    // If no token is stored, redirect to the login/register page.
     Effect::new(move |_: Option<()>| {
         #[cfg(feature = "hydrate")]
         if client::get_token().is_none() {
@@ -502,7 +457,6 @@ fn CreatePage() -> impl IntoView {
         }
     });
 
-    // ── derived ─────────────────────────────────────────────────────────────
     let effective_views = Memo::new(move |_| {
         if custom_views_on.get() {
             custom_views_val.get()
@@ -519,7 +473,6 @@ fn CreatePage() -> impl IntoView {
         has_payload && (!password_on.get() || !password.get().trim().is_empty()) && !loading.get()
     });
 
-    // ── submit handler ───────────────────────────────────────────────────────
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         set_error_msg.set(String::new());
@@ -528,7 +481,6 @@ fn CreatePage() -> impl IntoView {
             return;
         }
 
-        // Capture all reactive values before the async boundary.
         let mode = input_mode.get();
         let text = text_value.get();
         let mv = effective_views.get() as i32;
@@ -548,7 +500,6 @@ leptos::task::spawn_local(async move {
                 use crypto::ContentType;
                 use wasm_bindgen::JsCast;
 
-                // Retrieve the stored auth token; redirect to login if missing.
                 let token = match client::get_token() {
                     Some(t) => t,
                     None => {
@@ -563,7 +514,6 @@ leptos::task::spawn_local(async move {
                         create_secret(ContentType::Text, text.into_bytes(), mv, pass, days, token).await
                     }
                     InputMode::File => {
-                        // Grab the File from the <input type="file"> DOM node.
                         let maybe_file = fref
                             .get_untracked()
                             .as_deref()
@@ -593,13 +543,14 @@ leptos::task::spawn_local(async move {
                         set_generated_url.set(url);
                         set_step.set(CreateStep::Success);
                     }
-                    // Quota exceeded
+                    Err(ref e) if e.contains("server error 403") => {
+                        set_error_msg.set("Email not verified. Resend the verification code from the sign-in page.".to_string());
+                    }
                     Err(ref e) if e.contains("server error 401") && e.to_lowercase().contains("quota") => {
                         set_error_msg.set(
                             "You have reached your quota limit and cannot create any more secret links.".to_string()
                         );
                     }
-                    // Token invalid / expired – clear it and redirect to login
                     Err(ref e) if e.contains("server error 401") => {
                         client::clear_token();
                         client::navigate_to("/auth");
@@ -608,8 +559,6 @@ leptos::task::spawn_local(async move {
                 }
             }
 
-            // In SSR this branch is taken; the WASM has not loaded yet so
-            // nothing happens – after hydration the real branch runs.
             #[cfg(not(feature = "hydrate"))]
             {
                 let _ = (mode, text, mv, pass, days, fref);
@@ -620,7 +569,6 @@ leptos::task::spawn_local(async move {
         });
     };
 
-    // ── reset ────────────────────────────────────────────────────────────────
     let reset = move |_| {
         set_step.set(CreateStep::Form);
         set_input_mode.set(InputMode::Text);
@@ -638,7 +586,6 @@ leptos::task::spawn_local(async move {
         set_loading.set(false);
     };
 
-    // ── copy link ────────────────────────────────────────────────────────────
     let copy_link = move |_| {
         #[cfg(feature = "hydrate")]
         if let Some(w) = web_sys::window() {
@@ -647,12 +594,10 @@ leptos::task::spawn_local(async move {
         set_copied.set(true);
     };
 
-    // ── view ─────────────────────────────────────────────────────────────────
     view! {
         <Show
             when=move || step.get() == CreateStep::Form
             fallback=move || view! {
-                // ── Success card ───────────────────────────────────────────
                 <div class="card success-card">
                     <h1>"Your secret link is ready!"</h1>
                     <p class="success-subtitle">
@@ -706,7 +651,6 @@ leptos::task::spawn_local(async move {
                 </div>
             }
         >
-            // ── Create form ────────────────────────────────────────────────
             <div class="card">
                 <div class="card-header">
                     <h1>"Create a secret link"</h1>
@@ -718,7 +662,6 @@ leptos::task::spawn_local(async move {
 
                 <form on:submit=on_submit>
 
-                    // ── Mode toggle ──────────────────────────────────────────
                     <div class="mode-toggle" role="tablist">
                         <button
                             role="tab" type="button" class="tab"
@@ -738,7 +681,6 @@ leptos::task::spawn_local(async move {
                         </button>
                     </div>
 
-                    // ── Text / File input ────────────────────────────────────
                     <Show
                         when=move || input_mode.get() == InputMode::Text
                         fallback=move || view! {
@@ -788,7 +730,6 @@ leptos::task::spawn_local(async move {
                         </div>
                     </Show>
 
-                    // ── Expiry ───────────────────────────────────────────────
                     <div class="field">
                         <label>"Expires after"</label>
                         <div class="views-options">
@@ -805,7 +746,6 @@ leptos::task::spawn_local(async move {
                         </div>
                     </div>
 
-                    // ── Max views ────────────────────────────────────────────
                     <div class="field">
                         <label>"Maximum views"</label>
                         <div class="views-options">
@@ -858,7 +798,6 @@ leptos::task::spawn_local(async move {
                         </p>
                     </div>
 
-                    // ── Password protection ──────────────────────────────────
                     <div class="field">
                         <div class="toggle-row">
                             <div>
@@ -896,21 +835,18 @@ leptos::task::spawn_local(async move {
                         </Show>
                     </div>
 
-                    // ── Error ────────────────────────────────────────────────
                     <Show when=move || !error_msg.get().is_empty()>
                         <p class="submit-error" role="alert">
                             {move || error_msg.get()}
                         </p>
                     </Show>
 
-                    // ── Submit ───────────────────────────────────────────────
                     <button
                         type="submit"
                         class="btn-primary"
                         disabled=move || !can_submit.get()
                     >
                         {move || if loading.get() {
-                            // Argon2 in WASM can take a second; inform the user.
                             if password_on.get() {
                                 "Hashing password & encrypting…"
                             } else {
@@ -926,49 +862,34 @@ leptos::task::spawn_local(async move {
     }
 }
 
-// ── View page ────────────────────────────────────────────────────────────────
 
-/// All states the viewer page can be in.
 #[derive(Clone, PartialEq)]
 enum ViewState {
-    /// Fetching metadata from the server.
     LoadingMeta,
-    /// Metadata arrived; user must enter the password before we spend a view.
     NeedsPassword,
-    /// Password was submitted (or not needed); downloading + decrypting.
     Decrypting,
-    /// Successfully decrypted; content is in a separate signal.
     Ready,
-    /// Unrecoverable error (expired, burned, wrong key, …).
     Dead(String),
 }
 
 #[component]
 fn ViewPage() -> impl IntoView {
     let params = use_params_map();
-    // Reactive accessor: re-runs when the route params change.
     let id = move || params.with(|p| p.get("id").unwrap_or_default());
 
     let (state, set_state) = signal(ViewState::LoadingMeta);
-    // Stored separately so the signal type stays `Clone + PartialEq` cheaply.
     let (decrypted, set_decrypted) = signal::<Option<Decrypted>>(None);
     let (views_left, set_views_left) = signal(0_i32);
     let (pw_input, set_pw_input) = signal(String::new());
     let (pw_error, set_pw_error) = signal(String::new());
-    // Cache the key so the password-submit handler can use it.
     let (key_b64, set_key_b64) = signal(String::new());
 
-    // ── Initialise on mount ──────────────────────────────────────────────────
-    // `Effect::new` tracks every signal read inside it; here we read `id()`
-    // which means the effect re-runs when navigating between different secrets.
     Effect::new(move |_: Option<()>| {
         let current_id = id();
 
         leptos::task::spawn_local(async move {
             #[cfg(feature = "hydrate")]
             {
-                // The fragment (#…) is never sent to the server; read it here
-                // in the browser.
                 let hash = client::location_hash();
                 let key = hash.trim_start_matches('#').to_string();
 
@@ -999,10 +920,8 @@ fn ViewPage() -> impl IntoView {
                         set_views_left.set(meta.views_left);
 
                         if meta.password_required {
-                            // Show the password form; do NOT spend a view yet.
                             set_state.set(ViewState::NeedsPassword);
                         } else {
-                            // No password – fetch and decrypt immediately.
                             set_state.set(ViewState::Decrypting);
                             match client::fetch_and_decrypt(&current_id, &key, None).await {
                                 Ok(payload) => {
@@ -1015,11 +934,9 @@ fn ViewPage() -> impl IntoView {
                     }
                 }
             }
-            // SSR: stay in LoadingMeta; the WASM takes over after hydration.
         });
     });
 
-    // ── Password submit ──────────────────────────────────────────────────────
     let on_pw_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         set_pw_error.set(String::new());
@@ -1043,7 +960,6 @@ fn ViewPage() -> impl IntoView {
                     set_state.set(ViewState::Ready);
                 }
                 Err(e) if e == "wrong_password" => {
-                    // Return to the password form with an error.
                     set_state.set(ViewState::NeedsPassword);
                     set_pw_error.set("Incorrect password. Please try again.".to_string());
                 }
@@ -1062,12 +978,10 @@ fn ViewPage() -> impl IntoView {
         });
     };
 
-    // ── View ─────────────────────────────────────────────────────────────────
     view! {
         <div class="card">
             {move || match state.get() {
 
-                // ── Loading metadata ─────────────────────────────────────────
                 ViewState::LoadingMeta => view! {
                     <div class="secret-loading">
                         <div class="spinner"></div>
@@ -1075,7 +989,6 @@ fn ViewPage() -> impl IntoView {
                     </div>
                 }.into_any(),
 
-                // ── Password gate ────────────────────────────────────────────
                 ViewState::NeedsPassword => view! {
                     <div>
                         <div class="card-header">
@@ -1122,7 +1035,6 @@ fn ViewPage() -> impl IntoView {
                     </div>
                 }.into_any(),
 
-                // ── Decrypting ───────────────────────────────────────────────
                 ViewState::Decrypting => view! {
                     <div class="secret-loading">
                         <div class="spinner"></div>
@@ -1130,7 +1042,6 @@ fn ViewPage() -> impl IntoView {
                     </div>
                 }.into_any(),
 
-                // ── Ready ────────────────────────────────────────────────────
                 ViewState::Ready => {
                     match decrypted.get() {
                         Some(Decrypted::Text(text)) => view! {
@@ -1154,8 +1065,6 @@ fn ViewPage() -> impl IntoView {
                         }.into_any(),
 
                         Some(Decrypted::File { name, mime, bytes }) => {
-                            // Build a temporary object URL so the browser can
-                            // download the file without re-contacting the server.
                             #[cfg(feature = "hydrate")]
                             let dl_url = client::make_blob_url(
                                 &bytes,
@@ -1198,8 +1107,6 @@ fn ViewPage() -> impl IntoView {
                             }.into_any()
                         }
 
-                        // Should never happen (Ready always has Some), but
-                        // handle gracefully anyway.
                         None => view! {
                             <div class="secret-loading">
                                 <p>"Content unavailable."</p>
@@ -1208,7 +1115,6 @@ fn ViewPage() -> impl IntoView {
                     }
                 }
 
-                // ── Dead (expired / burned / error) ──────────────────────────
                 ViewState::Dead(msg) => view! {
                     <div class="error-card">
                         <h1>"Secret unavailable"</h1>
@@ -1223,7 +1129,6 @@ fn ViewPage() -> impl IntoView {
     }
 }
 
-// ── Auth page ─────────────────────────────────────────────────────────────────
 
 #[component]
 fn AuthPage() -> impl IntoView {
@@ -1232,8 +1137,9 @@ fn AuthPage() -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (error_msg, set_error_msg) = signal(String::new());
     let (loading, set_loading) = signal(false);
+    let (verify_email, set_verify_email) = signal(String::new());
+    let (verify_code, set_verify_code) = signal(String::new());
 
-    // If a valid token is already stored, redirect to the create page.
     Effect::new(move |_: Option<()>| {
         #[cfg(feature = "hydrate")]
         if client::get_token().is_some() {
@@ -1262,12 +1168,22 @@ fn AuthPage() -> impl IntoView {
                 let result = match current_mode {
                     AuthMode::Login => client::api_login(&email_val, &pass_val).await,
                     AuthMode::Register => client::api_register(&email_val, &pass_val).await,
+                    AuthMode::Verify => {
+                        // This shouldn't happen as Verify has its own handler
+                        Err("Unexpected state".to_string())
+                    }
                 };
 
                 match result {
                     Ok(token) => {
-                        client::set_token(&token);
-                        client::navigate_to("/");
+                        if current_mode == AuthMode::Register {
+                            client::set_token(&token);
+                            set_verify_email.set(email_val.clone());
+                            set_mode.set(AuthMode::Verify);
+                        } else {
+                            client::set_token(&token);
+                            client::navigate_to("/");
+                        }
                     }
                     Err(e) => set_error_msg.set(e),
                 }
@@ -1289,87 +1205,199 @@ fn AuthPage() -> impl IntoView {
                 <h1>{move || match mode.get() {
                     AuthMode::Login => "Sign in",
                     AuthMode::Register => "Create account",
+                    AuthMode::Verify => "Verify your email",
                 }}</h1>
-                <p>"You need an account to create secret links."</p>
+                <p>{move || match mode.get() {
+                    AuthMode::Verify => "Enter the code we sent to your email.",
+                    _ => "You need an account to create secret links.",
+                }}</p>
             </div>
 
-            <div class="mode-toggle" role="tablist">
-                <button
-                    role="tab" type="button" class="tab"
-                    class:active=move || mode.get() == AuthMode::Login
-                    on:click=move |_| {
-                        set_mode.set(AuthMode::Login);
-                        set_error_msg.set(String::new());
-                    }
-                >
-                    "Sign in"
-                </button>
-                <button
-                    role="tab" type="button" class="tab"
-                    class:active=move || mode.get() == AuthMode::Register
-                    on:click=move |_| {
-                        set_mode.set(AuthMode::Register);
-                        set_error_msg.set(String::new());
-                    }
-                >
-                    "Register"
-                </button>
-            </div>
-
-            <form on:submit=on_submit>
-                <div class="field">
-                    <label for="auth-email">"Email"</label>
-                    <input
-                        id="auth-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        autocomplete="email"
-                        prop:value=move || email.get()
-                        on:input=move |ev| set_email.set(event_target_value(&ev))
-                    />
+            <Show when=move || mode.get() != AuthMode::Verify>
+                <div class="mode-toggle" role="tablist">
+                    <button
+                        role="tab" type="button" class="tab"
+                        class:active=move || mode.get() == AuthMode::Login
+                        on:click=move |_| {
+                            set_mode.set(AuthMode::Login);
+                            set_error_msg.set(String::new());
+                        }
+                    >
+                        "Sign in"
+                    </button>
+                    <button
+                        role="tab" type="button" class="tab"
+                        class:active=move || mode.get() == AuthMode::Register
+                        on:click=move |_| {
+                            set_mode.set(AuthMode::Register);
+                            set_error_msg.set(String::new());
+                        }
+                    >
+                        "Register"
+                    </button>
                 </div>
 
-                <div class="field">
-                    <label for="auth-password">"Password"</label>
-                    <input
-                        id="auth-password"
-                        type="password"
-                        placeholder="Password"
-                        autocomplete=move || match mode.get() {
-                            AuthMode::Login => "current-password",
-                            AuthMode::Register => "new-password",
-                        }
-                        prop:value=move || password.get()
-                        on:input=move |ev| set_password.set(event_target_value(&ev))
-                    />
-                </div>
+                <form on:submit=on_submit>
+                    <div class="field">
+                        <label for="auth-email">"Email"</label>
+                        <input
+                            id="auth-email"
+                            type="email"
+                            placeholder="you@example.com"
+                            autocomplete="email"
+                            prop:value=move || email.get()
+                            on:input=move |ev| set_email.set(event_target_value(&ev))
+                        />
+                    </div>
 
-                <Show when=move || !error_msg.get().is_empty()>
-                    <p class="submit-error" role="alert">
-                        {move || error_msg.get()}
-                    </p>
-                </Show>
+                    <div class="field">
+                        <label for="auth-password">"Password"</label>
+                        <input
+                            id="auth-password"
+                            type="password"
+                            placeholder="Password"
+                            autocomplete=move || match mode.get() {
+                                AuthMode::Login => "current-password",
+                                AuthMode::Register => "new-password",
+                                AuthMode::Verify => "",
+                            }
+                            prop:value=move || password.get()
+                            on:input=move |ev| set_password.set(event_target_value(&ev))
+                        />
+                    </div>
 
-                <button
-                    type="submit"
-                    class="btn-primary"
-                    disabled=move || loading.get()
-                >
-                    {move || if loading.get() {
-                        "Please wait…"
-                    } else {
-                        match mode.get() {
-                            AuthMode::Login => "Sign in",
-                            AuthMode::Register => "Create account",
+                    <Show when=move || !error_msg.get().is_empty()>
+                        <p class="submit-error" role="alert">
+                            {move || error_msg.get()}
+                        </p>
+                    </Show>
+
+                    <button
+                        type="submit"
+                        class="btn-primary"
+                        disabled=move || loading.get()
+                    >
+                        {move || if loading.get() {
+                            "Please wait…"
+                        } else {
+                            match mode.get() {
+                                AuthMode::Login => "Sign in",
+                                AuthMode::Register => "Create account",
+                                AuthMode::Verify => "",
+                            }
+                        }}
+                    </button>
+                </form>
+            </Show>
+
+            <Show when=move || mode.get() == AuthMode::Verify>
+                {
+                    let on_verify_submit = move |ev: leptos::ev::SubmitEvent| {
+                        ev.prevent_default();
+                        set_error_msg.set(String::new());
+
+                        let code_val = verify_code.get();
+                        let email_val = verify_email.get();
+
+                        if code_val.trim().is_empty() {
+                            set_error_msg.set("Please enter the verification code.".to_string());
+                            return;
                         }
-                    }}
-                </button>
-            </form>
+
+                        set_loading.set(true);
+
+                        leptos::task::spawn_local(async move {
+                            #[cfg(feature = "hydrate")]
+                            {
+                                match client::api_verify(&email_val, &code_val).await {
+                                    Ok(()) => {
+                                        // Verification successful, navigate to home
+                                        client::navigate_to("/");
+                                    }
+                                    Err(e) => set_error_msg.set(e),
+                                }
+                            }
+
+                            #[cfg(not(feature = "hydrate"))]
+                            {
+                                set_error_msg.set("JavaScript is required.".to_string());
+                            }
+
+                            set_loading.set(false);
+                        });
+                    };
+
+                    let on_resend = move |_ev: leptos::ev::MouseEvent| {
+                        set_error_msg.set(String::new());
+                        let email_val = verify_email.get();
+
+                        leptos::task::spawn_local(async move {
+                            #[cfg(feature = "hydrate")]
+                            {
+                                match client::api_resend(&email_val).await {
+                                    Ok(()) => {
+                                        set_error_msg.set("Code resent to your email.".to_string());
+                                    }
+                                    Err(e) => set_error_msg.set(e),
+                                }
+                            }
+
+                            #[cfg(not(feature = "hydrate"))]
+                            {
+                                set_error_msg.set("JavaScript is required.".to_string());
+                            }
+                        });
+                    };
+
+                    view! {
+                        <form on:submit=on_verify_submit>
+                            <div class="field">
+                                <label for="verify-code">"Verification Code"</label>
+                                <input
+                                    id="verify-code"
+                                    type="text"
+                                    maxlength="6"
+                                    placeholder="000000"
+                                    prop:value=move || verify_code.get()
+                                    on:input=move |ev| set_verify_code.set(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <Show when=move || !error_msg.get().is_empty()>
+                                <p class="submit-error" role="alert">
+                                    {move || error_msg.get()}
+                                </p>
+                            </Show>
+
+                            <button
+                                type="submit"
+                                class="btn-primary"
+                                disabled=move || loading.get()
+                            >
+                                {move || if loading.get() {
+                                    "Please wait…"
+                                } else {
+                                    "Verify"
+                                }}
+                            </button>
+
+                            <button
+                                type="button"
+                                class="btn-outline"
+                                style="margin-top: 0.5rem;"
+                                on:click=on_resend
+                                disabled=move || loading.get()
+                            >
+                                "Resend code"
+                            </button>
+                        </form>
+                    }
+                }
+            </Show>
         </div>
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn format_file_size(bytes: usize) -> String {
     if bytes < 1_024 {
