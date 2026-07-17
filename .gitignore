@@ -2,3 +2,4 @@
 /frontend/build/
 .env
 .swp
+.serena/
