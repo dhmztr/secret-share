@@ -354,6 +354,7 @@ pub async fn resend_code(
             spawn_verification_email(state.redis.clone(), req.email.clone());
         }
         Ok(true) => {}
+        Err(UsersErrors::DoesntExist) => {}   // do not leak account existence
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
     }
     Ok(StatusCode::NO_CONTENT)

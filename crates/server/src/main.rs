@@ -19,6 +19,7 @@ use redis::aio::MultiplexedConnection;
 use sqlx::{Pool, Postgres};
 use std::net::SocketAddr;
 use tower_http::services::ServeDir;
+use tower_http::timeout::TimeoutLayer;
 #[derive(Clone)]
 pub struct AppState {
     pub redis: MultiplexedConnection,
@@ -216,6 +217,7 @@ pub async fn make_router(pool: AppState) -> Router {
         .route("/favicon.svg", get(serve_favicon))
         .nest_service("/pkg", ServeDir::new(&pkg_path))
         .fallback(leptos_axum::render_app_to_stream(shell))
+        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
         .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .with_state(pool)
 }

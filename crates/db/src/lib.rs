@@ -120,6 +120,19 @@ pub async fn redis_process_quota(
     pg: &PgPool,
     email: &str,
 ) -> Result<i32, UsersErrors> {
+    // monthly quota reset: refill to 5 and advance the window if it has elapsed
+    let refilled: Option<i32> = sqlx::query_scalar(
+        "UPDATE users SET quota_left = 5, quota_reset_at = NOW() + INTERVAL '1 month' \
+         WHERE email = $1 AND quota_reset_at <= NOW() RETURNING quota_left",
+    )
+    .bind(email)
+    .fetch_optional(pg)
+    .await
+    .map_err(|_| UsersErrors::ConnectionFailed)?;
+    if refilled.is_some() {
+        let _: () = conn.del::<_, ()>(email).await.unwrap_or(());
+    }
+
     let exists: bool = conn
         .exists(email)
         .await
