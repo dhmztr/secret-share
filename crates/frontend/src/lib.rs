@@ -1168,10 +1168,7 @@ fn AuthPage() -> impl IntoView {
                 let result = match current_mode {
                     AuthMode::Login => client::api_login(&email_val, &pass_val).await,
                     AuthMode::Register => client::api_register(&email_val, &pass_val).await,
-                    AuthMode::Verify => {
-                        // This shouldn't happen as Verify has its own handler
-                        Err("Unexpected state".to_string())
-                    }
+                    AuthMode::Verify => Err("Unexpected state".to_string()),
                 };
 
                 match result {
@@ -1311,7 +1308,6 @@ fn AuthPage() -> impl IntoView {
                             {
                                 match client::api_verify(&email_val, &code_val).await {
                                     Ok(()) => {
-                                        // Verification successful, navigate to home
                                         client::navigate_to("/");
                                     }
                                     Err(e) => set_error_msg.set(e),
