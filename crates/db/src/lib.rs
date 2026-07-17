@@ -115,6 +115,20 @@ pub async fn connect_redis(
     let con = client.get_multiplexed_async_connection().await?;
     Ok(con)
 }
+
+pub async fn run_migrations(pg: &PgPool) -> Result<(), sqlx::Error> {
+    // idempotent column adds so existing databases pick up new schema on deploy;
+    // fresh volumes already have these via init.sql
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ")
+        .execute(pg)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_reset_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '1 month')",
+    )
+    .execute(pg)
+    .await?;
+    Ok(())
+}
 pub async fn redis_process_quota(
     mut conn: MultiplexedConnection,
     pg: &PgPool,

@@ -217,7 +217,10 @@ pub async fn make_router(pool: AppState) -> Router {
         .route("/favicon.svg", get(serve_favicon))
         .nest_service("/pkg", ServeDir::new(&pkg_path))
         .fallback(leptos_axum::render_app_to_stream(shell))
-        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+        ))
         .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .with_state(pool)
 }
@@ -244,6 +247,9 @@ async fn main() {
     let psql_pool = connect_postgres(&db_user, &db_password, db_port, &db_host, &db_name)
         .await
         .expect("failed to connect to PostgreSQL");
+    db::run_migrations(&psql_pool)
+        .await
+        .expect("failed to run startup migrations");
     let redis_pool = connect_redis(&redis_url)
         .await
         .expect("Failed to connect to redis");
