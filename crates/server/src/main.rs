@@ -7,17 +7,13 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use axum_governor::{
-    GovernorConfigBuilder, GovernorLayer, Quota,
-    extractor::SmartIp,
-    nz,
-};
+use axum_governor::{GovernorConfigBuilder, GovernorLayer, Quota, extractor::SmartIp, nz};
 use ipnet::IpNet;
 use leptos::prelude::*;
-use std::str::FromStr;
 use redis::aio::MultiplexedConnection;
 use sqlx::{Pool, Postgres};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use tower_http::services::ServeDir;
 use tower_http::timeout::TimeoutLayer;
 #[derive(Clone)]
@@ -136,28 +132,7 @@ pub async fn make_router(pool: AppState) -> Router {
         .finish()
         .expect("Failed to initialize ratelimiter for register api!");
 
-    let register_api_ratelimit_2 = GovernorConfigBuilder::default()
-        .with_extractor(smart_ip())
-        .expect_connect_info()
-        .quota_default(Quota::requests_per_hour(nz!(10u32)))
-        .finish()
-        .expect("Failed to initialize ratelimiter for register api!");
-
     let api_limit = GovernorConfigBuilder::default()
-        .with_extractor(smart_ip())
-        .expect_connect_info()
-        .quota_default(Quota::requests_per_second(nz!(50u32)))
-        .finish()
-        .expect("Failed to initialize ratelimiter for register api!");
-
-    let api_limit_2 = GovernorConfigBuilder::default()
-        .with_extractor(smart_ip())
-        .expect_connect_info()
-        .quota_default(Quota::requests_per_second(nz!(50u32)))
-        .finish()
-        .expect("Failed to initialize ratelimiter for register api!");
-
-    let api_limit_3 = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
         .expect_connect_info()
         .quota_default(Quota::requests_per_second(nz!(50u32)))
@@ -192,7 +167,7 @@ pub async fn make_router(pool: AppState) -> Router {
         )
         .route(
             "/api/secrets/{id}/fetch",
-            post(fetch_decrypt).layer(GovernorLayer::new(api_limit_2)),
+            post(fetch_decrypt).layer(GovernorLayer::new(api_limit)),
         )
         .route(
             "/api/secrets/{id}/meta",
@@ -200,7 +175,7 @@ pub async fn make_router(pool: AppState) -> Router {
         )
         .route(
             "/api/secrets/{id}/burn",
-            post(burn).layer(GovernorLayer::new(api_limit_3)),
+            post(burn).layer(GovernorLayer::new(api_limit)),
         )
         .route(
             "/api/login",
@@ -208,10 +183,16 @@ pub async fn make_router(pool: AppState) -> Router {
         )
         .route(
             "/api/register",
-            post(register).layer(GovernorLayer::new(register_api_ratelimit_2)),
+            post(register).layer(GovernorLayer::new(register_api_ratelimit)),
         )
-        .route("/api/verify", post(verify).layer(GovernorLayer::new(verify_limit)))
-        .route("/api/resend", post(resend_code).layer(GovernorLayer::new(resend_limit)))
+        .route(
+            "/api/verify",
+            post(verify).layer(GovernorLayer::new(verify_limit)),
+        )
+        .route(
+            "/api/resend",
+            post(resend_code).layer(GovernorLayer::new(resend_limit)),
+        )
         .route("/health", get(health))
         .route("/style.css", get(serve_style))
         .route("/favicon.svg", get(serve_favicon))
@@ -283,5 +264,10 @@ async fn main() {
         .expect("failed to bind listener");
 
     println!("Serving on {addr}");
-    axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
