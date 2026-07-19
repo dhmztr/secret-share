@@ -15,6 +15,18 @@ use db::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use redis::aio::MultiplexedConnection;
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
+// Disposable/burner email domains rejected at registration.
+// Source: github.com/disposable-email-domains/disposable-email-domains
+static DISPOSABLE_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    include_str!("disposable_domains.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
+});
 
 // Dummy Argon2id hash of "dummy" used for timing equalization on nonexistent secrets
 // Prevents timing attacks that reveal secret existence based on password verification time
@@ -257,6 +269,13 @@ fn validate_email(email: &str) -> Result<(), (StatusCode, String)> {
         return Err((StatusCode::BAD_REQUEST, "Invalid email format".to_string()));
     }
 
+    if DISPOSABLE_DOMAINS.contains(domain.to_ascii_lowercase().as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Disposable email addresses are not allowed".to_string(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -358,4 +377,25 @@ pub async fn resend_code(
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_email;
+
+    #[test]
+    fn accepts_normal_email() {
+        assert!(validate_email("user@gmail.com").is_ok());
+    }
+
+    #[test]
+    fn rejects_disposable_email() {
+        assert!(validate_email("throwaway@mailinator.com").is_err());
+        assert!(validate_email("x@guerrillamail.com").is_err());
+    }
+
+    #[test]
+    fn disposable_check_is_case_insensitive() {
+        assert!(validate_email("x@MailInator.CoM").is_err());
+    }
 }

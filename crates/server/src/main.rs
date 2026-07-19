@@ -125,6 +125,8 @@ pub async fn make_router(pool: AppState) -> Router {
     let pkg_dir = std::env::var("LEPTOS_SITE_PKG_DIR").unwrap_or_else(|_| "pkg".to_string());
 
     let pkg_path = std::path::Path::new(&site_root).join(&pkg_dir);
+    // Each GovernorLayer consumes its config (GovernorConfig is not Copy),
+    // so routes sharing a rate cannot share one config instance.
     let register_api_ratelimit = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
         .expect_connect_info()
@@ -132,12 +134,33 @@ pub async fn make_router(pool: AppState) -> Router {
         .finish()
         .expect("Failed to initialize ratelimiter for register api!");
 
+    let login_ratelimit = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_hour(nz!(10u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for login api!");
+
     let api_limit = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
         .expect_connect_info()
         .quota_default(Quota::requests_per_second(nz!(50u32)))
         .finish()
-        .expect("Failed to initialize ratelimiter for register api!");
+        .expect("Failed to initialize ratelimiter for secrets api!");
+
+    let api_limit_2 = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_second(nz!(50u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for fetch api!");
+
+    let api_limit_3 = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_second(nz!(50u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for burn api!");
 
     let metadata_limit = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
@@ -167,7 +190,7 @@ pub async fn make_router(pool: AppState) -> Router {
         )
         .route(
             "/api/secrets/{id}/fetch",
-            post(fetch_decrypt).layer(GovernorLayer::new(api_limit)),
+            post(fetch_decrypt).layer(GovernorLayer::new(api_limit_2)),
         )
         .route(
             "/api/secrets/{id}/meta",
@@ -175,11 +198,11 @@ pub async fn make_router(pool: AppState) -> Router {
         )
         .route(
             "/api/secrets/{id}/burn",
-            post(burn).layer(GovernorLayer::new(api_limit)),
+            post(burn).layer(GovernorLayer::new(api_limit_3)),
         )
         .route(
             "/api/login",
-            post(login).layer(GovernorLayer::new(register_api_ratelimit)),
+            post(login).layer(GovernorLayer::new(login_ratelimit)),
         )
         .route(
             "/api/register",
