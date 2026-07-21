@@ -57,6 +57,11 @@ pub struct FetchDecryptReq {
     pub password: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct BurnReq {
+    pub token: String,
+}
+
 impl From<(bool, bool, i32, DateTime<Utc>)> for MetadataResponse {
     fn from(
         (password_required, burned, views_left, expires_at): (bool, bool, i32, DateTime<Utc>),
@@ -88,10 +93,20 @@ pub async fn encrypt_data(
             Err(db::UsersErrors::DoesntExist) => return Err((StatusCode::UNAUTHORIZED, "user not found".to_owned())),
             Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "verification check failed".to_owned())),
         }
+        if req.max_views < 1 || req.max_views > 1000 {
+            return Err((StatusCode::BAD_REQUEST, "max_views must be between 1 and 1000".to_string()));
+        }
+        let now = Utc::now();
+        if req.expires_at <= now || req.expires_at > now + chrono::Duration::days(365) {
+            return Err((StatusCode::BAD_REQUEST, "expires_at must be in the future and within 365 days".to_string()));
+        }
+        if req.env.nonce.len() != 12 {
+            return Err((StatusCode::BAD_REQUEST, "invalid nonce".to_string()));
+        }
         if let Ok(amount_left) = redis_process_quota(state.redis, &state.postgres, &useremail).await
         {
             if amount_left >= 0 {
-                let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
+                let secret = SecretLink::new(req.env, req.max_views, req.expires_at, Some(useremail.clone()));
                 let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -195,11 +210,15 @@ pub async fn fetch_metadata(
 pub async fn burn(
     State(state): State<AppState>,
     Path(path_data): Path<String>,
+    Json(req): Json<BurnReq>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let secret_uuid = Uuid::parse_str(&path_data)
         .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
 
-    burn_secret(&state.postgres, secret_uuid)
+    let useremail = verify_token(req.token).await
+        .map_err(|_| (StatusCode::UNAUTHORIZED, "Verification failed".to_owned()))?;
+
+    burn_secret(&state.postgres, secret_uuid, &useremail)
         .await
         .map_err(|e| match e {
             SecretErrors::Expired => (
@@ -278,13 +297,13 @@ fn spawn_verification_email(redis: MultiplexedConnection, email: String) {
     tokio::spawn(async move {
         let code = generate_code();
         if let Err(e) = store_verify_code(redis, &email, &code).await {
-            eprintln!("store_verify_code failed for {email}: {e:?}");
+            eprintln!("store_verify_code failed: {e:?}");
             return;
         }
         match SmtpConfig::from_env() {
             Ok(cfg) => {
                 if let Err(e) = send_verification_email(&cfg, &email, &code).await {
-                    eprintln!("verification email send failed for {email}: {e}");
+                    eprintln!("verification email send failed: {e}");
                 }
             }
             Err(e) => eprintln!("SMTP config error: {e}"),

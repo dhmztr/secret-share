@@ -272,6 +272,9 @@ async fn main() {
         .expect("DB_PORT must be a valid port number");
     let db_name = std::env::var("DB_NAME").expect("DB_NAME must be set");
     let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
+    if redis_url.contains("://:@") {
+        panic!("REDIS_URL has an empty password; set REDIS_PASSWORD");
+    }
 
     let psql_pool = connect_postgres(&db_user, &db_password, db_port, &db_host, &db_name)
         .await

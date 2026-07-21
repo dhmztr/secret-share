@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS secrets (
     expires_at TIMESTAMPTZ  NOT NULL,
     burned_at  TIMESTAMPTZ,
     created_at TIMESTAMPTZ  NOT NULL,
-    haslo      TEXT
+    haslo      TEXT,
+    creator_email TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_secrets_expires_at ON secrets (expires_at);

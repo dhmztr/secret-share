@@ -38,9 +38,11 @@ pub async fn create_token(conn:&PgPool,user:&str) -> Result<String,UsersErrors> 
 }
 
 pub async fn verify_token(token_to_check:String) -> Result<String,UsersErrors>{
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
     let token_data = jsonwebtoken::decode::<Claim>(&token_to_check,
         &jsonwebtoken::DecodingKey::from_secret(get_jwt_secret().as_bytes()),
-        &jsonwebtoken::Validation::default())
+        &validation)
         .map_err(|e| match e.kind() {
             jsonwebtoken::errors::ErrorKind::ExpiredSignature => UsersErrors::Expired,
             _ => UsersErrors::Unauthorized,
