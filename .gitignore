@@ -1,5 +1,14 @@
 /target/
 /frontend/build/
 .env
+**/.env
 .swp
 .serena/
+
+# ruflo / tooling artifacts
+.agents/
+.claude-flow/
+.swarm/
+.mcp.json
+ruvector.db
+skills-lock.json
