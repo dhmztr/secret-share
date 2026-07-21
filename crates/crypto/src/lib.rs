@@ -26,7 +26,7 @@ pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
         ContentType::Text => {
             let mut out = Vec::with_capacity(1 + 2 + data.len());
             out.push(TAG_TEXT);
-            // reserved header fields; keeps TEXT payload layout parseable alongside FILE
+            // reserved header fields (parity with FILE layout)
             out.extend_from_slice(&(0u16).to_be_bytes());
             out.extend_from_slice(&(0u16).to_be_bytes());
             out.extend_from_slice(data);

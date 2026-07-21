@@ -2,9 +2,10 @@
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, Request},
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_governor::{GovernorConfigBuilder, GovernorLayer, Quota, extractor::SmartIp, nz};
@@ -103,9 +104,28 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
-/// Configure SmartIp with trusted proxy CIDRs for header extraction.
-/// Trusts loopback and private ranges since cloudflared reaches the app
-/// over the docker network; these ranges are not internet-reachable.
+async fn security_headers_middleware(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        "X-Frame-Options",
+        HeaderValue::from_static("DENY"),
+    );
+    response.headers_mut().insert(
+        "Referrer-Policy",
+        HeaderValue::from_static("no-referrer"),
+    );
+    response.headers_mut().insert(
+        "Permissions-Policy",
+        HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
+    );
+    response
+}
+
+/// Trust loopback + private ranges; cloudflared reaches the app over the docker network.
 fn smart_ip() -> SmartIp {
     let trusted = [
         "127.0.0.1/32",
@@ -125,8 +145,7 @@ pub async fn make_router(pool: AppState) -> Router {
     let pkg_dir = std::env::var("LEPTOS_SITE_PKG_DIR").unwrap_or_else(|_| "pkg".to_string());
 
     let pkg_path = std::path::Path::new(&site_root).join(&pkg_dir);
-    // Each GovernorLayer consumes its config (GovernorConfig is not Copy),
-    // so routes sharing a rate cannot share one config instance.
+    // one config per route: GovernorLayer consumes it
     let register_api_ratelimit = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
         .expect_connect_info()
@@ -226,12 +245,18 @@ pub async fn make_router(pool: AppState) -> Router {
             std::time::Duration::from_secs(30),
         ))
         .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
+        .layer(middleware::from_fn(security_headers_middleware))
         .with_state(pool)
 }
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+
+    let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    if jwt_secret.len() < 32 {
+        panic!("JWT_SECRET must be at least 32 bytes");
+    }
 
     let addr: SocketAddr = std::env::var("LEPTOS_SITE_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())

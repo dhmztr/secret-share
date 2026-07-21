@@ -117,8 +117,7 @@ pub async fn connect_redis(
 }
 
 pub async fn run_migrations(pg: &PgPool) -> Result<(), sqlx::Error> {
-    // idempotent column adds so existing databases pick up new schema on deploy;
-    // fresh volumes already have these via init.sql
+    // idempotent: existing DBs get new columns on deploy
     sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ")
         .execute(pg)
         .await?;
@@ -134,7 +133,7 @@ pub async fn redis_process_quota(
     pg: &PgPool,
     email: &str,
 ) -> Result<i32, UsersErrors> {
-    // monthly quota reset: refill to 5 and advance the window if it has elapsed
+    // monthly reset: refill if the window elapsed
     let refilled: Option<i32> = sqlx::query_scalar(
         "UPDATE users SET quota_left = 5, quota_reset_at = NOW() + INTERVAL '1 month' \
          WHERE email = $1 AND quota_reset_at <= NOW() RETURNING quota_left",

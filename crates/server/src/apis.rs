@@ -18,8 +18,7 @@ use redis::aio::MultiplexedConnection;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-// Disposable/burner email domains rejected at registration.
-// Source: github.com/disposable-email-domains/disposable-email-domains
+// blocklist source: github.com/disposable-email-domains/disposable-email-domains
 static DISPOSABLE_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     include_str!("disposable_domains.txt")
         .lines()
@@ -28,8 +27,7 @@ static DISPOSABLE_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         .collect()
 });
 
-// Dummy Argon2id hash of "dummy" used for timing equalization on nonexistent secrets
-// Prevents timing attacks that reveal secret existence based on password verification time
+// dummy hash to equalize timing when a secret has no password
 const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$iSu0lbxkeSv2K3fKi3PBQQ$NC62cyncpyVMM0liOZNVwYzxQGSHfALtO4dnPO8PLyo";
 
 #[derive(Serialize)]
@@ -143,7 +141,6 @@ pub async fn fetch_decrypt(
             ),
         })?;
 
-    // Handle password verification with timing equalization
     if let Some(dbpass) = dbpass_opt.as_deref() {
         let submitted = req
             .password
@@ -241,13 +238,11 @@ pub struct RegisterReq {
     pub passhash: String,
 }
 
-// Basic email validation: non-empty, exactly one @, non-empty parts, domain has dot, max 254 chars
 fn validate_email(email: &str) -> Result<(), (StatusCode, String)> {
     if email.is_empty() || email.len() > 254 {
         return Err((StatusCode::BAD_REQUEST, "Invalid email format".to_string()));
     }
 
-    // Reject emails with whitespace characters
     if email.chars().any(|c| c.is_whitespace()) {
         return Err((StatusCode::BAD_REQUEST, "Invalid email format".to_string()));
     }
@@ -373,7 +368,7 @@ pub async fn resend_code(
             spawn_verification_email(state.redis.clone(), req.email.clone());
         }
         Ok(true) => {}
-        Err(UsersErrors::DoesntExist) => {}   // do not leak account existence
+        Err(UsersErrors::DoesntExist) => {}
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
     }
     Ok(StatusCode::NO_CONTENT)

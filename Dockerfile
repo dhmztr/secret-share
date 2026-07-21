@@ -46,6 +46,9 @@ ENV LEPTOS_SITE_PKG_DIR=pkg
 ENV LEPTOS_OUTPUT_NAME=frontend
 ENV LEPTOS_SITE_ADDR=0.0.0.0:8080
 
+RUN useradd --system --uid 10001 --no-create-home appuser
+USER appuser
+
 EXPOSE 8080
 
 ENTRYPOINT ["/app/server"]
