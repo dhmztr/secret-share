@@ -1,11 +1,9 @@
 use jsonwebtoken;
-use sqlx::{PgPool, types::Uuid};
+use sqlx::PgPool;
 use serde::{Serialize,Deserialize};
-use std::{fs::{OpenOptions }, io::Write};
 use argon2::{Argon2, PasswordHash,  PasswordVerifier, };
 use db::{UserTiers, UsersErrors,create_user};
-use rand::distr::{Alphanumeric,SampleString};
-use chrono::{DateTime,Utc};
+use chrono::Utc;
 
 pub mod email;
 pub use email::*;
@@ -33,7 +31,7 @@ pub async fn create_token(conn:&PgPool,user:&str) -> Result<String,UsersErrors> 
         tier: user_data.tier,
         exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize
     };
-    jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claim, &jsonwebtoken::EncodingKey::from_secret(get_jwt_secret().as_bytes()))
+    jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256), &claim, &jsonwebtoken::EncodingKey::from_secret(get_jwt_secret().as_bytes()))
         .map_err(|_| UsersErrors::TokenCreationFailed)
 }
 

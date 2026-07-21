@@ -40,7 +40,6 @@ pub struct SecretLink {
     burned_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     haslo: Option<String>,
-    creator_email: Option<String>,
 }
 #[derive(Deserialize, Serialize, Debug, sqlx::Type)]
 #[sqlx(type_name = "user_tier", rename_all = "lowercase")]
@@ -65,7 +64,7 @@ pub enum UsersErrors {
     Expired,
 }
 impl SecretLink {
-    pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>, creator_email: Option<String>) -> Self {
+    pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
         Self {
             v: VERSION,
             nonce: env.nonce,
@@ -76,7 +75,6 @@ impl SecretLink {
             burned_at: None,
             created_at: Utc::now(),
             haslo: env.password,
-            creator_email,
         }
     }
 }
@@ -128,7 +126,10 @@ pub async fn run_migrations(pg: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pg)
     .await?;
-    sqlx::query("ALTER TABLE secrets ADD COLUMN IF NOT EXISTS creator_email TEXT")
+    sqlx::query("ALTER TABLE secrets DROP COLUMN IF EXISTS creator_email")
+        .execute(pg)
+        .await?;
+    sqlx::query("ALTER TABLE secrets DROP COLUMN IF EXISTS burn_token_hash")
         .execute(pg)
         .await?;
     Ok(())
@@ -274,9 +275,9 @@ pub async fn insert_secret(
     match sqlx::query_scalar(
         r#"
     INSERT INTO secrets
-        (v, nonce, ciphertext, max_views, view_count, expires_at, burned_at, created_at, haslo, creator_email)
+        (v, nonce, ciphertext, max_views, view_count, expires_at, burned_at, created_at, haslo)
     VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     RETURNING secret_id
     "#
     )
@@ -289,7 +290,6 @@ pub async fn insert_secret(
     .bind(secret.burned_at)
     .bind(secret.created_at)
     .bind(secret.haslo)
-    .bind(secret.creator_email)
     .fetch_one(conn)
     .await
     {
@@ -364,26 +364,6 @@ pub async fn select_secret_password(
         None => Err(SecretErrors::Expired),
     }
 }
-pub async fn burn_secret(
-    conn: &sqlx::Pool<sqlx::Postgres>,
-    secret_id: Uuid,
-    creator_email: &str,
-) -> Result<String, SecretErrors> {
-    let result = sqlx::query("UPDATE secrets SET burned_at = $1 WHERE secret_id = $2 AND creator_email = $3 AND burned_at IS NULL")
-        .bind(Utc::now())
-        .bind(secret_id)
-        .bind(creator_email)
-        .execute(conn)
-        .await
-        .map_err(|_| SecretErrors::ConnectionFailed)?;
-
-    if result.rows_affected() == 0 {
-        Err(SecretErrors::Expired)
-    } else {
-        Ok(String::from("Ok"))
-    }
-}
-
 pub async fn create_user(conn: &PgPool, email: &str, password: &str) -> Result<(), UsersErrors> {
     if email_exists(conn, email).await.map_err(|_| UsersErrors::ConnectionFailed)? {
         return Err(UsersErrors::Exists);

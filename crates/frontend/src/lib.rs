@@ -300,9 +300,10 @@ mod client {
             return Err(format!("server error {}: {msg}", resp.status()));
         }
 
-        let uuid: String = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
+        let resp_id: String = resp.text().await.map_err(|e| format!("parse error: {e}"))?;
+        let id = resp_id.trim_matches('"');
 
-        Ok(format!("{}/s/{uuid}#{}", origin(), encode_key(&key)))
+        Ok(format!("{}/s/{}#{}", origin(), id, encode_key(&key)))
     }
 
     pub async fn get_meta(id: &str) -> Result<MetaResp, String> {

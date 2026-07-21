@@ -174,13 +174,6 @@ pub async fn make_router(pool: AppState) -> Router {
         .finish()
         .expect("Failed to initialize ratelimiter for fetch api!");
 
-    let api_limit_3 = GovernorConfigBuilder::default()
-        .with_extractor(smart_ip())
-        .expect_connect_info()
-        .quota_default(Quota::requests_per_second(nz!(50u32)))
-        .finish()
-        .expect("Failed to initialize ratelimiter for burn api!");
-
     let metadata_limit = GovernorConfigBuilder::default()
         .with_extractor(smart_ip())
         .expect_connect_info()
@@ -214,10 +207,6 @@ pub async fn make_router(pool: AppState) -> Router {
         .route(
             "/api/secrets/{id}/meta",
             get(fetch_metadata).layer(GovernorLayer::new(metadata_limit)),
-        )
-        .route(
-            "/api/secrets/{id}/burn",
-            post(burn).layer(GovernorLayer::new(api_limit_3)),
         )
         .route(
             "/api/login",

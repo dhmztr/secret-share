@@ -9,7 +9,7 @@ use crypto::Envelope;
 use crypto::authenticate;
 use db::{SecretErrors, UsersErrors, redis_process_quota, set_verified, is_verified, store_verify_code, check_verify_code, VerifyOutcome};
 use db::{
-    SecretLink, burn_secret, increment_and_return, insert_secret, select_metadata,
+    SecretLink, increment_and_return, insert_secret, select_metadata,
     select_secret_password,
 };
 use serde::{Deserialize, Serialize};
@@ -57,11 +57,6 @@ pub struct FetchDecryptReq {
     pub password: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub struct BurnReq {
-    pub token: String,
-}
-
 impl From<(bool, bool, i32, DateTime<Utc>)> for MetadataResponse {
     fn from(
         (password_required, burned, views_left, expires_at): (bool, bool, i32, DateTime<Utc>),
@@ -106,7 +101,7 @@ pub async fn encrypt_data(
         if let Ok(amount_left) = redis_process_quota(state.redis, &state.postgres, &useremail).await
         {
             if amount_left >= 0 {
-                let secret = SecretLink::new(req.env, req.max_views, req.expires_at, Some(useremail.clone()));
+                let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
                 let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -205,33 +200,6 @@ pub async fn fetch_metadata(
         })?;
 
     Ok(Json(MetadataResponse::from(data)))
-}
-
-pub async fn burn(
-    State(state): State<AppState>,
-    Path(path_data): Path<String>,
-    Json(req): Json<BurnReq>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let secret_uuid = Uuid::parse_str(&path_data)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid uuid".to_string()))?;
-
-    let useremail = verify_token(req.token).await
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Verification failed".to_owned()))?;
-
-    burn_secret(&state.postgres, secret_uuid, &useremail)
-        .await
-        .map_err(|e| match e {
-            SecretErrors::Expired => (
-                StatusCode::GONE,
-                "secret expired".to_string(),
-            ),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to burn secret".to_string(),
-            ),
-        })?;
-
-    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
