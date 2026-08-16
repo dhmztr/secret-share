@@ -86,11 +86,10 @@ impl SecretLink {
 }
 impl From<&str> for UserTiers {
     fn from(value: &str) -> Self {
-        match value {
-            "Free" => UserTiers::Free,
-            "Premium" => UserTiers::Premium,
-            "Enterprise" => UserTiers::Enterprise,
-            _ => unreachable!(),
+        match value.to_ascii_lowercase().as_str() {
+            "premium" => UserTiers::Premium,
+            "enterprise" => UserTiers::Enterprise,
+            _ => UserTiers::Free,
         }
     }
 }
@@ -454,7 +453,7 @@ pub async fn fetch_user(conn: &PgPool, email: &str) -> Result<User, UsersErrors>
         Err(UsersErrors::DoesntExist)
     } else {
         let row= sqlx::query(
-    r#"SELECT password_hash,tier,quota_left,password_version FROM users WHERE email = $1"#,
+    r#"SELECT password_hash,tier::text AS tier,quota_left,password_version FROM users WHERE email = $1"#,
 ).bind(email).fetch_one(conn).await;
         match row {
             Ok(user_data) => {
