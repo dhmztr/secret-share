@@ -141,6 +141,18 @@ pub fn hash_password(pass: &[u8]) -> Result<String, String> {
         .map_err(|e| format!("password hashing failed: {e}"))
 }
 
+pub fn hash_client(password: &[u8], email: &str) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let normalized = email.trim().to_ascii_lowercase();
+    let digest = Sha256::digest(normalized.as_bytes());
+    let salt = SaltString::encode_b64(&digest[..16])
+        .map_err(|e| format!("salt error: {e}"))?;
+    Argon2::default()
+        .hash_password(password, &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| format!("client hash failed: {e}"))
+}
+
 pub fn authenticate(dbpass: &str, contestant: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(dbpass) else {
         return false;
@@ -255,5 +267,26 @@ mod tests {
         let (kind, content) = unwrap_payload(&decrypted).unwrap();
         assert_eq!(kind, ContentType::Text);
         assert_eq!(content, text.as_bytes());
+    }
+
+    #[test]
+    fn hash_client_is_deterministic() {
+        let password = b"mypassword";
+        let email1 = "User@Example.com";
+        let email2 = "user@example.com";
+        let email3 = "  user@example.com  ";
+
+        let hash1 = hash_client(password, email1).unwrap();
+        let hash2 = hash_client(password, email2).unwrap();
+        let hash3 = hash_client(password, email3).unwrap();
+
+        assert_eq!(hash1, hash2, "hashes should match for different casings");
+        assert_eq!(hash2, hash3, "hashes should match with surrounding whitespace");
+
+        let hash_diff = hash_client(password, "other@example.com").unwrap();
+        assert_ne!(hash1, hash_diff, "different email should produce different hash");
+
+        let hash_diff_pwd = hash_client(b"differentpassword", email1).unwrap();
+        assert_ne!(hash1, hash_diff_pwd, "different password should produce different hash");
     }
 }

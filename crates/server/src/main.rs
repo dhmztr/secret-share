@@ -28,7 +28,7 @@ impl AppState {
     }
 }
 mod apis;
-use apis::*;
+use apis::{*, password_reset_request, password_reset_confirm};
 use db::{connect_postgres, connect_redis};
 use frontend::{App, FAVICON, STYLES};
 
@@ -195,6 +195,20 @@ pub async fn make_router(pool: AppState) -> Router {
         .finish()
         .expect("Failed to initialize ratelimiter for resend api!");
 
+    let reset_request_limit = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_hour(nz!(5u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for reset request api!");
+
+    let reset_confirm_limit = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_hour(nz!(20u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for reset confirm api!");
+
     Router::new()
         .route(
             "/api/secrets",
@@ -223,6 +237,14 @@ pub async fn make_router(pool: AppState) -> Router {
         .route(
             "/api/resend",
             post(resend_code).layer(GovernorLayer::new(resend_limit)),
+        )
+        .route(
+            "/api/password-reset/request",
+            post(password_reset_request).layer(GovernorLayer::new(reset_request_limit)),
+        )
+        .route(
+            "/api/password-reset/confirm",
+            post(password_reset_confirm).layer(GovernorLayer::new(reset_confirm_limit)),
         )
         .route("/health", get(health))
         .route("/style.css", get(serve_style))

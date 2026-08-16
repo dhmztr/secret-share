@@ -63,6 +63,7 @@ enum AuthMode {
     Login,
     Register,
     Verify,
+    Reset,
 }
 
 
@@ -169,14 +170,22 @@ mod client {
     }
 
     pub async fn api_login(email: &str, password: &str) -> Result<String, String> {
+        use crypto::hash_client;
+
         #[derive(Serialize)]
-        struct LoginReq<'a> {
-            email: &'a str,
-            passhash: &'a str,
+        struct LoginReq {
+            email: String,
+            passhash: String,
         }
 
+        let passhash = hash_client(password.as_bytes(), email)
+            .map_err(|e| format!("hash error: {e}"))?;
+
         let resp = Request::post("/api/login")
-            .json(&LoginReq { email, passhash: password })
+            .json(&LoginReq {
+                email: email.to_string(),
+                passhash,
+            })
             .map_err(|e| format!("serialise error: {e}"))?
             .send()
             .await
@@ -184,7 +193,9 @@ mod client {
 
         if !resp.ok() {
             let msg = resp.text().await.unwrap_or_default();
-            return Err(if resp.status() == 401 {
+            return Err(if resp.status() == 426 {
+                msg
+            } else if resp.status() == 401 {
                 "Invalid email or password.".to_string()
             } else {
                 format!("Server error ({}): {msg}", resp.status())
@@ -195,7 +206,7 @@ mod client {
     }
 
     pub async fn api_register(email: &str, password: &str) -> Result<String, String> {
-        use crypto::hash_password;
+        use crypto::hash_client;
 
         #[derive(Serialize)]
         struct RegisterReq {
@@ -203,7 +214,8 @@ mod client {
             passhash: String,
         }
 
-        let passhash = hash_password(password.as_bytes())?;
+        let passhash = hash_client(password.as_bytes(), email)
+            .map_err(|e| format!("hash error: {e}"))?;
 
         let resp = Request::post("/api/register")
             .json(&RegisterReq { email: email.to_string(), passhash })
@@ -261,6 +273,56 @@ mod client {
             Ok(())
         } else {
             Err("Could not resend code.".into())
+        }
+    }
+
+    pub async fn api_reset_request(email: &str) -> Result<(), String> {
+        #[derive(Serialize)]
+        struct R<'a> {
+            email: &'a str,
+        }
+        let resp = Request::post("/api/password-reset/request")
+            .json(&R { email })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+        if resp.ok() {
+            Ok(())
+        } else {
+            Err("Could not send reset code.".into())
+        }
+    }
+
+    pub async fn api_reset_confirm(email: &str, code: &str, password: &str) -> Result<(), String> {
+        use crypto::hash_client;
+
+        #[derive(Serialize)]
+        struct C<'a> {
+            email: &'a str,
+            code: &'a str,
+            passhash: String,
+        }
+
+        let passhash = hash_client(password.as_bytes(), email)
+            .map_err(|e| format!("hash error: {e}"))?;
+
+        let resp = Request::post("/api/password-reset/confirm")
+            .json(&C { email, code, passhash })
+            .map_err(|e| format!("serialise error: {e}"))?
+            .send()
+            .await
+            .map_err(|e| format!("network error: {e}"))?;
+
+        if resp.ok() {
+            Ok(())
+        } else {
+            Err(match resp.status() {
+                401 => "Incorrect code.".into(),
+                410 => "Code expired. Request a new one.".into(),
+                429 => "Too many attempts. Request a new code.".into(),
+                s => format!("Server error ({s})"),
+            })
         }
     }
 
@@ -1140,6 +1202,10 @@ fn AuthPage() -> impl IntoView {
     let (loading, set_loading) = signal(false);
     let (verify_email, set_verify_email) = signal(String::new());
     let (verify_code, set_verify_code) = signal(String::new());
+    let (reset_email, set_reset_email) = signal(String::new());
+    let (reset_code, set_reset_code) = signal(String::new());
+    let (reset_password, set_reset_password) = signal(String::new());
+    let (success_msg, set_success_msg) = signal(String::new());
 
     Effect::new(move |_: Option<()>| {
         #[cfg(feature = "hydrate")]
@@ -1151,6 +1217,7 @@ fn AuthPage() -> impl IntoView {
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         set_error_msg.set(String::new());
+        set_success_msg.set(String::new());
 
         let email_val = email.get();
         let pass_val = password.get();
@@ -1170,6 +1237,7 @@ fn AuthPage() -> impl IntoView {
                     AuthMode::Login => client::api_login(&email_val, &pass_val).await,
                     AuthMode::Register => client::api_register(&email_val, &pass_val).await,
                     AuthMode::Verify => Err("Unexpected state".to_string()),
+                    AuthMode::Reset => Err("Unexpected state".to_string()),
                 };
 
                 match result {
@@ -1182,6 +1250,11 @@ fn AuthPage() -> impl IntoView {
                             client::set_token(&token);
                             client::navigate_to("/");
                         }
+                    }
+                    Err(e) if e.contains("security update") => {
+                        set_error_msg.set(e);
+                        set_reset_email.set(email_val.clone());
+                        set_mode.set(AuthMode::Reset);
                     }
                     Err(e) => set_error_msg.set(e),
                 }
@@ -1204,14 +1277,16 @@ fn AuthPage() -> impl IntoView {
                     AuthMode::Login => "Sign in",
                     AuthMode::Register => "Create account",
                     AuthMode::Verify => "Verify your email",
+                    AuthMode::Reset => "Reset your password",
                 }}</h1>
                 <p>{move || match mode.get() {
                     AuthMode::Verify => "Enter the code we sent to your email.",
+                    AuthMode::Reset => "Enter the reset code and your new password.",
                     _ => "You need an account to create secret links.",
                 }}</p>
             </div>
 
-            <Show when=move || mode.get() != AuthMode::Verify>
+            <Show when=move || mode.get() != AuthMode::Verify && mode.get() != AuthMode::Reset>
                 <div class="mode-toggle" role="tablist">
                     <button
                         role="tab" type="button" class="tab"
@@ -1258,6 +1333,7 @@ fn AuthPage() -> impl IntoView {
                                 AuthMode::Login => "current-password",
                                 AuthMode::Register => "new-password",
                                 AuthMode::Verify => "",
+                                AuthMode::Reset => "",
                             }
                             prop:value=move || password.get()
                             on:input=move |ev| set_password.set(event_target_value(&ev))
@@ -1282,6 +1358,7 @@ fn AuthPage() -> impl IntoView {
                                 AuthMode::Login => "Sign in",
                                 AuthMode::Register => "Create account",
                                 AuthMode::Verify => "",
+                                AuthMode::Reset => "",
                             }
                         }}
                     </button>
@@ -1383,6 +1460,139 @@ fn AuthPage() -> impl IntoView {
                                 class="btn-outline"
                                 style="margin-top: 0.5rem;"
                                 on:click=on_resend
+                                disabled=move || loading.get()
+                            >
+                                "Resend code"
+                            </button>
+                        </form>
+                    }
+                }
+            </Show>
+
+            <Show when=move || mode.get() == AuthMode::Reset>
+                {
+                    let on_reset_request = move |_ev: leptos::ev::MouseEvent| {
+                        set_error_msg.set(String::new());
+                        set_success_msg.set(String::new());
+                        let email_val = reset_email.get();
+
+                        set_loading.set(true);
+
+                        leptos::task::spawn_local(async move {
+                            #[cfg(feature = "hydrate")]
+                            {
+                                match client::api_reset_request(&email_val).await {
+                                    Ok(()) => {
+                                        set_success_msg.set("Reset code sent to your email.".to_string());
+                                    }
+                                    Err(e) => set_error_msg.set(e),
+                                }
+                            }
+
+                            #[cfg(not(feature = "hydrate"))]
+                            {
+                                set_error_msg.set("JavaScript is required.".to_string());
+                            }
+
+                            set_loading.set(false);
+                        });
+                    };
+
+                    let on_reset_confirm = move |ev: leptos::ev::SubmitEvent| {
+                        ev.prevent_default();
+                        set_error_msg.set(String::new());
+                        set_success_msg.set(String::new());
+
+                        let code_val = reset_code.get();
+                        let email_val = reset_email.get();
+                        let pass_val = reset_password.get();
+
+                        if code_val.trim().is_empty() || pass_val.trim().is_empty() {
+                            set_error_msg.set("Please enter both code and new password.".to_string());
+                            return;
+                        }
+
+                        set_loading.set(true);
+
+                        leptos::task::spawn_local(async move {
+                            #[cfg(feature = "hydrate")]
+                            {
+                                match client::api_reset_confirm(&email_val, &code_val, &pass_val).await {
+                                    Ok(()) => {
+                                        set_success_msg.set("Password reset successfully. Redirecting to login…".to_string());
+                                        set_reset_password.set(String::new());
+                                        set_reset_code.set(String::new());
+                                        set_reset_email.set(String::new());
+                                        set_mode.set(AuthMode::Login);
+                                    }
+                                    Err(e) => set_error_msg.set(e),
+                                }
+                            }
+
+                            #[cfg(not(feature = "hydrate"))]
+                            {
+                                set_error_msg.set("JavaScript is required.".to_string());
+                            }
+
+                            set_loading.set(false);
+                        });
+                    };
+
+                    view! {
+                        <form on:submit=on_reset_confirm>
+                            <div class="field">
+                                <label for="reset-code">"Reset Code"</label>
+                                <input
+                                    id="reset-code"
+                                    type="text"
+                                    maxlength="6"
+                                    placeholder="000000"
+                                    prop:value=move || reset_code.get()
+                                    on:input=move |ev| set_reset_code.set(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <div class="field">
+                                <label for="reset-password">"New Password"</label>
+                                <input
+                                    id="reset-password"
+                                    type="password"
+                                    placeholder="Enter new password…"
+                                    autocomplete="new-password"
+                                    prop:value=move || reset_password.get()
+                                    on:input=move |ev| set_reset_password.set(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <Show when=move || !error_msg.get().is_empty()>
+                                <p class="submit-error" role="alert">
+                                    {move || error_msg.get()}
+                                </p>
+                            </Show>
+
+                            <Show when=move || !success_msg.get().is_empty()>
+                                <p class="submit-error" role="alert" style="color: green;">
+                                    {move || success_msg.get()}
+                                </p>
+                            </Show>
+
+                            <button
+                                type="submit"
+                                class="btn-primary"
+                                disabled=move || loading.get()
+                            >
+                                {move || if loading.get() {
+                                    "Resetting…"
+                                } else {
+                                    "Set new password"
+                                }}
+                            </button>
+
+                            <button
+                                type="button"
+                                class="btn-outline"
+                                style="margin-top: 0.5rem;"
+                                on:click=on_reset_request
                                 disabled=move || loading.get()
                             >
                                 "Resend code"

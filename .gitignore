@@ -12,3 +12,5 @@
 .mcp.json
 ruvector.db
 skills-lock.json
+.claude/
+CLAUDE.md

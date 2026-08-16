@@ -1,70 +1,77 @@
-use jsonwebtoken;
-use sqlx::PgPool;
-use serde::{Serialize,Deserialize};
-use argon2::{Argon2, PasswordHash,  PasswordVerifier, };
-use db::{UserTiers, UsersErrors,create_user};
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use chrono::Utc;
+use db::{UserTiers, UsersErrors, create_user};
+use jsonwebtoken;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 
 pub mod email;
 pub use email::*;
 
-
 fn get_jwt_secret() -> String {
-    std::env::var("JWT_SECRET")
-        .expect("JWT_SECRET must be set")
+    std::env::var("JWT_SECRET").expect("JWT_SECRET must be set")
 }
 
-
-
-#[derive(Serialize,Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Claim {
     pub userid: String,
     pub tier: UserTiers,
-    pub exp: usize
-
+    pub exp: usize,
 }
-pub async fn create_token(conn:&PgPool,user:&str) -> Result<String,UsersErrors> {
-    let user_data = db::fetch_user(conn,user).await?;
+pub async fn create_token(conn: &PgPool, user: &str) -> Result<String, UsersErrors> {
+    let user_data = db::fetch_user(conn, user).await?;
 
     let claim = Claim {
         userid: user_data.email,
         tier: user_data.tier,
-        exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize
+        exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
     };
-    jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256), &claim, &jsonwebtoken::EncodingKey::from_secret(get_jwt_secret().as_bytes()))
-        .map_err(|_| UsersErrors::TokenCreationFailed)
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &claim,
+        &jsonwebtoken::EncodingKey::from_secret(get_jwt_secret().as_bytes()),
+    )
+    .map_err(|_| UsersErrors::TokenCreationFailed)
 }
 
-pub async fn verify_token(token_to_check:String) -> Result<String,UsersErrors>{
+pub async fn verify_token(token_to_check: String) -> Result<String, UsersErrors> {
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
     validation.validate_exp = true;
-    let token_data = jsonwebtoken::decode::<Claim>(&token_to_check,
+    let token_data = jsonwebtoken::decode::<Claim>(
+        &token_to_check,
         &jsonwebtoken::DecodingKey::from_secret(get_jwt_secret().as_bytes()),
-        &validation)
-        .map_err(|e| match e.kind() {
-            jsonwebtoken::errors::ErrorKind::ExpiredSignature => UsersErrors::Expired,
-            _ => UsersErrors::Unauthorized,
-        })?;
+        &validation,
+    )
+    .map_err(|e| match e.kind() {
+        jsonwebtoken::errors::ErrorKind::ExpiredSignature => UsersErrors::Expired,
+        _ => UsersErrors::Unauthorized,
+    })?;
     Ok(token_data.claims.userid)
 }
 
-pub async fn login_user(conn:&PgPool,user:&str,password:&str) -> Result<String,UsersErrors> {
-    let user_data = db::fetch_user(conn,user).await?;
-    let parsed_hash = PasswordHash::new(&user_data.password_hash)
-        .map_err(|_| UsersErrors::Unauthorized)?;
-    let argon2 = Argon2::default();
-    match argon2.verify_password(password.as_bytes(),&parsed_hash) {
-        Ok(_) => Ok(create_token(conn, user).await?),
-        Err(_) => Err(UsersErrors::Unauthorized)
+pub async fn login_user(conn: &PgPool, user: &str, password: &str) -> Result<String, UsersErrors> {
+    let user_data = db::fetch_user(conn, user).await?;
+    if user_data.password_version == 0 {
+        return Err(UsersErrors::NeedsPasswordReset);
     }
-
+    let parsed_hash =
+        PasswordHash::new(&user_data.password_hash).map_err(|_| UsersErrors::Unauthorized)?;
+    let argon2 = Argon2::default();
+    match argon2.verify_password(password.as_bytes(), &parsed_hash) {
+        Ok(_) => Ok(create_token(conn, user).await?),
+        Err(_) => Err(UsersErrors::Unauthorized),
+    }
 }
-pub async fn register_user(conn:&PgPool,email:&str,pswdhash: &str) -> Result<String,UsersErrors> {
-        match create_user(conn,email,pswdhash).await {
-            Ok(_) => match create_token(conn, email).await {
-                Ok(val) => Ok(val),
-                Err(_) => Err(UsersErrors::TokenCreationFailed)
-            },
-            Err(e) => Err(e) 
-        }
+pub async fn register_user(
+    conn: &PgPool,
+    email: &str,
+    pswdhash: &str,
+) -> Result<String, UsersErrors> {
+    match create_user(conn, email, pswdhash).await {
+        Ok(_) => match create_token(conn, email).await {
+            Ok(val) => Ok(val),
+            Err(_) => Err(UsersErrors::TokenCreationFailed),
+        },
+        Err(e) => Err(e),
+    }
 }

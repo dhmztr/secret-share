@@ -5,9 +5,8 @@ use axum::{
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
-use crypto::Envelope;
-use crypto::authenticate;
-use db::{SecretErrors, UsersErrors, redis_process_quota, set_verified, is_verified, store_verify_code, check_verify_code, VerifyOutcome};
+use crypto::{Envelope, authenticate, hash_password};
+use db::{SecretErrors, UsersErrors, redis_process_quota, set_verified, is_verified, store_verify_code, check_verify_code, store_reset_code, check_reset_code, update_password, VerifyOutcome};
 use db::{
     SecretLink, increment_and_return, insert_secret, select_metadata,
     select_secret_password,
@@ -225,6 +224,18 @@ pub struct RegisterReq {
     pub passhash: String,
 }
 
+#[derive(Deserialize)]
+pub struct ResetRequestReq {
+    pub email: String,
+}
+
+#[derive(Deserialize)]
+pub struct ResetConfirmReq {
+    pub email: String,
+    pub code: String,
+    pub passhash: String,
+}
+
 fn validate_email(email: &str) -> Result<(), (StatusCode, String)> {
     if email.is_empty() || email.len() > 254 {
         return Err((StatusCode::BAD_REQUEST, "Invalid email format".to_string()));
@@ -279,15 +290,36 @@ fn spawn_verification_email(redis: MultiplexedConnection, email: String) {
     });
 }
 
+fn spawn_reset_email(redis: MultiplexedConnection, email: String) {
+    tokio::spawn(async move {
+        let code = generate_code();
+        if let Err(e) = store_reset_code(redis, &email, &code).await {
+            eprintln!("store_reset_code failed: {e:?}");
+            return;
+        }
+        match SmtpConfig::from_env() {
+            Ok(cfg) => {
+                if let Err(e) = send_verification_email(&cfg, &email, &code).await {
+                    eprintln!("reset email send failed: {e}");
+                }
+            }
+            Err(e) => eprintln!("SMTP config error: {e}"),
+        }
+    });
+}
+
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     validate_email(&req.email)?;
-    if let Ok(token) = login_user(&state.postgres, &req.email, &req.passhash).await {
-        Ok((StatusCode::OK, token))
-    } else {
-        Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned()))
+    match login_user(&state.postgres, &req.email, &req.passhash).await {
+        Ok(token) => Ok((StatusCode::OK, token)),
+        Err(UsersErrors::NeedsPasswordReset) => {
+            spawn_reset_email(state.redis.clone(), req.email.clone());
+            Err((StatusCode::UPGRADE_REQUIRED, "Your account predates a security update. We emailed you a reset code — use it to set a new password.".to_owned()))
+        }
+        Err(_) => Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned()))
     }
 }
 
@@ -296,7 +328,9 @@ pub async fn register(
     Json(req): Json<RegisterReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     validate_email(&req.email)?;
-    match register_user(&state.postgres, &req.email, &req.passhash).await {
+    let stored = hash_password(req.passhash.as_bytes())
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "hash error".to_string()))?;
+    match register_user(&state.postgres, &req.email, &stored).await {
         Ok(val) => {
             spawn_verification_email(state.redis.clone(), req.email.clone());
             Ok((StatusCode::CREATED, val))
@@ -359,6 +393,52 @@ pub async fn resend_code(
         Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn password_reset_request(
+    State(state): State<AppState>,
+    Json(req): Json<ResetRequestReq>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    validate_email(&req.email)?;
+    match is_verified(&state.postgres, &req.email).await {
+        Ok(_) => {
+            spawn_reset_email(state.redis.clone(), req.email.clone());
+        }
+        Err(UsersErrors::DoesntExist) => {}
+        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn password_reset_confirm(
+    State(state): State<AppState>,
+    Json(req): Json<ResetConfirmReq>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    validate_email(&req.email)?;
+    if req.code.len() != 6 || !req.code.chars().all(|c| c.is_ascii_digit()) {
+        return Err((StatusCode::BAD_REQUEST, "Invalid code format".to_owned()));
+    }
+    match check_reset_code(state.redis.clone(), &req.email, &req.code).await {
+        Ok(VerifyOutcome::Ok) => {
+            let stored = hash_password(req.passhash.as_bytes())
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "hash error".to_string()))?;
+            update_password(&state.postgres, &req.email, &stored)
+                .await
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "update failed".to_string()))?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        Ok(VerifyOutcome::WrongCode) => {
+            Err((StatusCode::UNAUTHORIZED, "Incorrect code".to_owned()))
+        }
+        Ok(VerifyOutcome::TooManyAttempts) => {
+            Err((StatusCode::TOO_MANY_REQUESTS, "Too many attempts".to_owned()))
+        }
+        Ok(VerifyOutcome::Expired) => Err((StatusCode::GONE, "Code expired".to_owned())),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "reset failed".to_owned(),
+        )),
+    }
 }
 
 #[cfg(test)]

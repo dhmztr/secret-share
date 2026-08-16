@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
     tier          user_tier    NOT NULL DEFAULT 'free',
     quota_left    INTEGER      NOT NULL DEFAULT 5,
     quota_reset_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '1 month'),
-    verified_at   TIMESTAMPTZ
+    verified_at   TIMESTAMPTZ,
+    password_version SMALLINT   NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS secrets (

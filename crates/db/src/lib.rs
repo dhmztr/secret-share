@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{
     self,
     postgres::{PgConnectOptions, PgPool, PgPoolOptions},
+    Row,
 };
 use subtle::ConstantTimeEq;
 #[derive(Serialize, Deserialize)]
@@ -14,6 +15,7 @@ pub struct User {
     pub password_hash: String,
     pub tier: UserTiers,
     pub quota_left: i32,
+    pub password_version: i16,
 }
 use uuid::Uuid;
 const VERSION: i16 = 1;
@@ -22,6 +24,9 @@ const VERIFY_CODE_PREFIX: &str = "verify:code:";
 const VERIFY_ATTEMPTS_PREFIX: &str = "verify:attempts:";
 const VERIFY_TTL_SECS: i64 = 900;
 const VERIFY_MAX_ATTEMPTS: i64 = 5;
+
+const RESET_CODE_PREFIX: &str = "reset:code:";
+const RESET_ATTEMPTS_PREFIX: &str = "reset:attempts:";
 
 pub enum VerifyOutcome {
     Ok,
@@ -62,6 +67,7 @@ pub enum UsersErrors {
     ConnectionFailed,
     TokenCreationFailed,
     Expired,
+    NeedsPasswordReset,
 }
 impl SecretLink {
     pub fn new(env: Envelope, max_views: i32, expires_at: DateTime<Utc>) -> Self {
@@ -126,6 +132,9 @@ pub async fn run_migrations(pg: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pg)
     .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_version SMALLINT NOT NULL DEFAULT 0")
+        .execute(pg)
+        .await?;
     sqlx::query("ALTER TABLE secrets DROP COLUMN IF EXISTS creator_email")
         .execute(pg)
         .await?;
@@ -232,6 +241,57 @@ pub async fn check_verify_code(
         }
     }
 }
+
+pub async fn store_reset_code(
+    mut conn: MultiplexedConnection,
+    email: &str,
+    code: &str,
+) -> Result<(), UsersErrors> {
+    let key = format!("{RESET_CODE_PREFIX}{email}");
+    let akey = format!("{RESET_ATTEMPTS_PREFIX}{email}");
+    conn.set_ex::<_, _, ()>(&key, code, VERIFY_TTL_SECS as u64)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    conn.set_ex::<_, _, ()>(&akey, 0, VERIFY_TTL_SECS as u64)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    Ok(())
+}
+
+pub async fn check_reset_code(
+    mut conn: MultiplexedConnection,
+    email: &str,
+    submitted: &str,
+) -> Result<VerifyOutcome, UsersErrors> {
+    let key = format!("{RESET_CODE_PREFIX}{email}");
+    let akey = format!("{RESET_ATTEMPTS_PREFIX}{email}");
+    let attempts: i64 = conn
+        .incr(&akey, 1)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    let _: bool = conn
+        .expire(&akey, VERIFY_TTL_SECS)
+        .await
+        .unwrap_or(false);
+    if attempts > VERIFY_MAX_ATTEMPTS {
+        return Ok(VerifyOutcome::TooManyAttempts);
+    }
+    let stored: Option<String> = conn
+        .get(&key)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    match stored {
+        None => Ok(VerifyOutcome::Expired),
+        Some(code) => {
+            if code.as_bytes().ct_eq(submitted.as_bytes()).into() {
+                let _: () = conn.del::<_, ()>(&[&key, &akey]).await.unwrap_or(());
+                Ok(VerifyOutcome::Ok)
+            } else {
+                Ok(VerifyOutcome::WrongCode)
+            }
+        }
+    }
+}
 pub async fn redis_synchronize_quota(
     mut conn: (&PgPool, MultiplexedConnection),
 ) -> Result<(), RedisError> {
@@ -239,7 +299,7 @@ pub async fn redis_synchronize_quota(
     let mut redisiter: redis::AsyncIter<String> = conn.1.scan().await?;
     while let Some(key) = redisiter.next_item().await {
         let Ok(key_string) = key else { continue; };
-        if key_string.starts_with("verify:") {
+        if key_string.starts_with("verify:") || key_string.starts_with("reset:") {
             continue;
         }
         let val: Option<i32> = conn_get.get(&key_string).await?;
@@ -368,16 +428,17 @@ pub async fn create_user(conn: &PgPool, email: &str, password: &str) -> Result<(
     if email_exists(conn, email).await.map_err(|_| UsersErrors::ConnectionFailed)? {
         return Err(UsersErrors::Exists);
     }
-    let row = sqlx::query!(
+    let row = sqlx::query(
         "INSERT INTO users
-        (email,password_hash,tier ,quota_left) VALUES
-($1,$2,$3,$4) RETURNING id
+        (email,password_hash,tier ,quota_left,password_version) VALUES
+        ($1,$2,$3,$4,$5) RETURNING id
         ",
-        email,
-        password,
-        UserTiers::Free as UserTiers,
-        5
     )
+    .bind(email)
+    .bind(password)
+    .bind(UserTiers::Free as UserTiers)
+    .bind(5)
+    .bind(1i16)
     .fetch_one(conn)
     .await;
     match row {
@@ -392,16 +453,20 @@ pub async fn fetch_user(conn: &PgPool, email: &str) -> Result<User, UsersErrors>
     if !email_exists(conn, email).await.map_err(|_| UsersErrors::ConnectionFailed)? {
         Err(UsersErrors::DoesntExist)
     } else {
-        let row= sqlx::query!(
-    r#"SELECT password_hash,tier as "tier: UserTiers",quota_left FROM users WHERE email = $1"#,email
-).fetch_one(conn).await;
+        let row= sqlx::query(
+    r#"SELECT password_hash,tier,quota_left,password_version FROM users WHERE email = $1"#,
+).bind(email).fetch_one(conn).await;
         match row {
-            Ok(user_data) => Ok(User {
-                email: email.to_string(),
-                password_hash: user_data.password_hash,
-                tier: UserTiers::from(user_data.tier),
-                quota_left: user_data.quota_left,
-            }),
+            Ok(user_data) => {
+                let tier_str: String = user_data.get("tier");
+                Ok(User {
+                    email: email.to_string(),
+                    password_hash: user_data.get("password_hash"),
+                    tier: UserTiers::from(tier_str.as_str()),
+                    quota_left: user_data.get("quota_left"),
+                    password_version: user_data.get("password_version"),
+                })
+            }
             Err(_) => Err(UsersErrors::ConnectionFailed),
         }
     }
@@ -438,6 +503,22 @@ pub async fn fetch_password(conn: &PgPool, email: &str) -> Result<String, sqlx::
         .fetch_one(conn)
         .await;
     passwd
+}
+
+pub async fn update_password(
+    conn: &PgPool,
+    email: &str,
+    new_hash: &str,
+) -> Result<(), UsersErrors> {
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, password_version = 1 WHERE email = $2",
+    )
+    .bind(new_hash)
+    .bind(email)
+    .execute(conn)
+    .await
+    .map(|_| ())
+    .map_err(|_| UsersErrors::ConnectionFailed)
 }
 #[cfg(test)]
 mod tests {
