@@ -1363,6 +1363,22 @@ fn AuthPage() -> impl IntoView {
                         }}
                     </button>
                 </form>
+
+                <Show when=move || mode.get() == AuthMode::Login>
+                    <button
+                        type="button"
+                        class="btn-outline"
+                        style="margin-top: 0.75rem;"
+                        on:click=move |_| {
+                            set_reset_email.set(email.get());
+                            set_error_msg.set(String::new());
+                            set_success_msg.set(String::new());
+                            set_mode.set(AuthMode::Reset);
+                        }
+                    >
+                        "Forgot password?"
+                    </button>
+                </Show>
             </Show>
 
             <Show when=move || mode.get() == AuthMode::Verify>
@@ -1541,6 +1557,18 @@ fn AuthPage() -> impl IntoView {
                     view! {
                         <form on:submit=on_reset_confirm>
                             <div class="field">
+                                <label for="reset-email">"Email"</label>
+                                <input
+                                    id="reset-email"
+                                    type="email"
+                                    placeholder="you@example.com"
+                                    autocomplete="email"
+                                    prop:value=move || reset_email.get()
+                                    on:input=move |ev| set_reset_email.set(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <div class="field">
                                 <label for="reset-code">"Reset Code"</label>
                                 <input
                                     id="reset-code"
@@ -1595,7 +1623,7 @@ fn AuthPage() -> impl IntoView {
                                 on:click=on_reset_request
                                 disabled=move || loading.get()
                             >
-                                "Resend code"
+                                "Send reset code"
                             </button>
                         </form>
                     }
