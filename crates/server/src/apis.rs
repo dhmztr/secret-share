@@ -228,6 +228,21 @@ pub async fn fetch_metadata(
 }
 
 #[derive(Deserialize)]
+pub struct TokenCheckReq {
+    pub token: String,
+}
+
+pub async fn check_token(
+    Json(req): Json<TokenCheckReq>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    match verify_token(req.token).await {
+        Ok(email) => Ok((StatusCode::OK, email)),
+        Err(UsersErrors::Expired) => Err((StatusCode::UNAUTHORIZED, "token expired".to_string())),
+        Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".to_string())),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct VerifyReq {
     pub email: String,
     pub code: String,

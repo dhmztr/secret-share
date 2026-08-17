@@ -224,6 +224,13 @@ pub async fn make_router(pool: AppState) -> Router {
         .finish()
         .expect("Failed to initialize ratelimiter for reset confirm api!");
 
+    let token_check_limit = GovernorConfigBuilder::default()
+        .with_extractor(smart_ip())
+        .expect_connect_info()
+        .quota_default(Quota::requests_per_second(nz!(50u32)))
+        .finish()
+        .expect("Failed to initialize ratelimiter for token check api!");
+
     Router::new()
         .route(
             "/api/secrets",
@@ -260,6 +267,10 @@ pub async fn make_router(pool: AppState) -> Router {
         .route(
             "/api/password-reset/confirm",
             post(password_reset_confirm).layer(GovernorLayer::new(reset_confirm_limit)),
+        )
+        .route(
+            "/api/token/check",
+            post(check_token).layer(GovernorLayer::new(token_check_limit)),
         )
         .route("/health", get(health))
         .route("/style.css", get(serve_style))
