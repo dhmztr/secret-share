@@ -28,6 +28,10 @@ const VERIFY_MAX_ATTEMPTS: i64 = 5;
 const RESET_CODE_PREFIX: &str = "reset:code:";
 const RESET_ATTEMPTS_PREFIX: &str = "reset:attempts:";
 
+const LOGIN_FAIL_PREFIX: &str = "login:fail:";
+const LOGIN_MAX_FAILURES: i64 = 5;
+const LOGIN_LOCK_SECS: i64 = 900;
+
 pub enum VerifyOutcome {
     Ok,
     WrongCode,
@@ -291,6 +295,43 @@ pub async fn check_reset_code(
         }
     }
 }
+pub async fn login_failures_over_limit(
+    mut conn: MultiplexedConnection,
+    email: &str,
+) -> Result<bool, UsersErrors> {
+    let key = format!("{LOGIN_FAIL_PREFIX}{email}");
+    let count: Option<i64> = conn
+        .get(&key)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    Ok(count.unwrap_or(0) >= LOGIN_MAX_FAILURES)
+}
+
+pub async fn record_login_failure(
+    mut conn: MultiplexedConnection,
+    email: &str,
+) -> Result<(), UsersErrors> {
+    let key = format!("{LOGIN_FAIL_PREFIX}{email}");
+    let _: i64 = conn
+        .incr(&key, 1)
+        .await
+        .map_err(|_| UsersErrors::ConnectionFailed)?;
+    let _: bool = conn
+        .expire(&key, LOGIN_LOCK_SECS)
+        .await
+        .unwrap_or(false);
+    Ok(())
+}
+
+pub async fn clear_login_failures(
+    mut conn: MultiplexedConnection,
+    email: &str,
+) -> Result<(), UsersErrors> {
+    let key = format!("{LOGIN_FAIL_PREFIX}{email}");
+    let _: () = conn.del(&key).await.unwrap_or(());
+    Ok(())
+}
+
 pub async fn redis_synchronize_quota(
     mut conn: (&PgPool, MultiplexedConnection),
 ) -> Result<(), RedisError> {
@@ -298,7 +339,7 @@ pub async fn redis_synchronize_quota(
     let mut redisiter: redis::AsyncIter<String> = conn.1.scan().await?;
     while let Some(key) = redisiter.next_item().await {
         let Ok(key_string) = key else { continue; };
-        if key_string.starts_with("verify:") || key_string.starts_with("reset:") {
+        if key_string.starts_with("verify:") || key_string.starts_with("reset:") || key_string.starts_with("login:") {
             continue;
         }
         let val: Option<i32> = conn_get.get(&key_string).await?;

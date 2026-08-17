@@ -4,13 +4,14 @@ use auth::{
 };
 use axum::{
     extract::{Json, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use chrono::{DateTime, Utc};
 use crypto::{Envelope, authenticate, hash_password};
 use db::{
     SecretErrors, UsersErrors, VerifyOutcome, check_reset_code, check_verify_code, is_verified,
     redis_process_quota, set_verified, store_reset_code, store_verify_code, update_password,
+    login_failures_over_limit, record_login_failure, clear_login_failures,
 };
 use db::{
     SecretLink, increment_and_return, insert_secret, select_metadata, select_secret_password,
@@ -235,7 +236,6 @@ pub struct ResendReq {
 pub struct LoginReq {
     pub email: String,
     pub passhash: String,
-    pub turnstile_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -294,26 +294,12 @@ fn validate_email(email: &str) -> Result<(), (StatusCode, String)> {
 }
 
 async fn verify_turnstile(
-    headers: &HeaderMap,
     token: &Option<String>,
 ) -> Result<(), (StatusCode, String)> {
     let secret = match std::env::var("TURNSTILE_SECRET") {
         Ok(s) if !s.is_empty() => s,
         _ => return Ok(()),
     };
-
-    if let Ok(bypass) = std::env::var("CLI_BYPASS_TOKEN") {
-        if !bypass.is_empty() {
-            if let Some(h) = headers
-                .get("X-Turnstile-Bypass")
-                .and_then(|v| v.to_str().ok())
-            {
-                if h == bypass {
-                    return Ok(());
-                }
-            }
-        }
-    }
 
     let token_str = token
         .as_deref()
@@ -379,16 +365,32 @@ fn spawn_reset_email(redis: MultiplexedConnection, email: String) {
 
 pub async fn login(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    verify_turnstile(&headers, &req.turnstile_token).await?;
     validate_email(&req.email)?;
+
+    if login_failures_over_limit(state.redis.clone(), &req.email)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many login attempts, try again later".to_string(),
+        ));
+    }
+
     match login_user(&state.postgres, &req.email, &req.passhash).await {
-        Ok(token) => Ok((StatusCode::OK, token)),
+        Ok(token) => {
+            let _ = clear_login_failures(state.redis.clone(), &req.email).await;
+            Ok((StatusCode::OK, token))
+        }
         Err(UsersErrors::NeedsPasswordReset) => {
             spawn_reset_email(state.redis.clone(), req.email.clone());
             Err((StatusCode::UPGRADE_REQUIRED, "Your account predates a security update. We emailed you a reset code — use it to set a new password.".to_owned()))
+        }
+        Err(UsersErrors::Unauthorized) => {
+            let _ = record_login_failure(state.redis.clone(), &req.email).await;
+            Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned()))
         }
         Err(_) => Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned())),
     }
@@ -396,10 +398,9 @@ pub async fn login(
 
 pub async fn register(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<RegisterReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    verify_turnstile(&headers, &req.turnstile_token).await?;
+    verify_turnstile(&req.turnstile_token).await?;
     validate_email(&req.email)?;
     let stored = hash_password(req.passhash.as_bytes())
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "hash error".to_string()))?;

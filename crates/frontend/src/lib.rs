@@ -196,20 +196,15 @@ mod client {
         struct LoginReq {
             email: String,
             passhash: String,
-            turnstile_token: Option<String>,
         }
 
         let passhash = hash_client(password.as_bytes(), email)
             .map_err(|e| format!("hash error: {e}"))?;
 
-        let token = turnstile_token();
-        let turnstile_token = (!token.is_empty()).then_some(token);
-
         let resp = Request::post("/api/login")
             .json(&LoginReq {
                 email: email.to_string(),
                 passhash,
-                turnstile_token,
             })
             .map_err(|e| format!("serialise error: {e}"))?
             .send()
@@ -222,6 +217,8 @@ mod client {
                 msg
             } else if resp.status() == 401 {
                 "Invalid email or password.".to_string()
+            } else if resp.status() == 429 {
+                "Too many login attempts. Please try again later.".to_string()
             } else {
                 format!("Server error ({}): {msg}", resp.status())
             });
@@ -1390,7 +1387,7 @@ fn AuthPage() -> impl IntoView {
                         </p>
                     </Show>
 
-                    <Show when=move || !turnstile_key.get().is_empty()>
+                    <Show when=move || !turnstile_key.get().is_empty() && mode.get() == AuthMode::Register>
                         <div class="cf-turnstile" data-sitekey=move || turnstile_key.get() data-callback="onTurnstileToken"></div>
                     </Show>
 
