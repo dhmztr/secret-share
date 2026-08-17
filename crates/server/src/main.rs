@@ -28,7 +28,7 @@ impl AppState {
     }
 }
 mod apis;
-use apis::{*, password_reset_request, password_reset_confirm};
+use apis::{password_reset_confirm, password_reset_request, *};
 use db::{connect_postgres, connect_redis};
 use frontend::{App, FAVICON, STYLES};
 
@@ -52,6 +52,17 @@ fn shell() -> impl IntoView {
         pkg, name, pkg, name
     );
 
+    let turnstile_sitekey = std::env::var("TURNSTILE_SITE_KEY").unwrap_or_default();
+    let turnstile_head = if !turnstile_sitekey.is_empty() {
+        format!(
+            r#"window.__TURNSTILE_SITEKEY="{}";window.__ts_token="";window.onTurnstileToken=function(t){{window.__ts_token=t;}};"#,
+            turnstile_sitekey
+        )
+    } else {
+        String::new()
+    };
+    let turnstile_enabled = !turnstile_sitekey.is_empty();
+
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -72,6 +83,12 @@ fn shell() -> impl IntoView {
                 <link rel="stylesheet" href="/style.css"/>
 
                 <script type="module" inner_html=script_content></script>
+                {turnstile_enabled.then(move || view! {
+                    <>
+                        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+                        <script inner_html=turnstile_head></script>
+                    </>
+                })}
             </head>
             <body>
                 <App/>
@@ -110,14 +127,12 @@ async fn security_headers_middleware(req: Request, next: Next) -> Response {
         "X-Content-Type-Options",
         HeaderValue::from_static("nosniff"),
     );
-    response.headers_mut().insert(
-        "X-Frame-Options",
-        HeaderValue::from_static("DENY"),
-    );
-    response.headers_mut().insert(
-        "Referrer-Policy",
-        HeaderValue::from_static("no-referrer"),
-    );
+    response
+        .headers_mut()
+        .insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    response
+        .headers_mut()
+        .insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
     response.headers_mut().insert(
         "Permissions-Policy",
         HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),

@@ -111,6 +111,26 @@ mod client {
             .unwrap_or_default()
     }
 
+    pub fn turnstile_sitekey() -> String {
+        web_sys::window()
+            .and_then(|w| {
+                js_sys::Reflect::get(&w, &"__TURNSTILE_SITEKEY".into())
+                    .ok()?
+                    .as_string()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn turnstile_token() -> String {
+        web_sys::window()
+            .and_then(|w| {
+                js_sys::Reflect::get(&w, &"__ts_token".into())
+                    .ok()?
+                    .as_string()
+            })
+            .unwrap_or_default()
+    }
+
     pub async fn read_file_bytes(file: &web_sys::File) -> Result<(String, String, Vec<u8>), String> {
         let name = file.name();
         let mime = file.type_();
@@ -176,15 +196,20 @@ mod client {
         struct LoginReq {
             email: String,
             passhash: String,
+            turnstile_token: Option<String>,
         }
 
         let passhash = hash_client(password.as_bytes(), email)
             .map_err(|e| format!("hash error: {e}"))?;
 
+        let token = turnstile_token();
+        let turnstile_token = (!token.is_empty()).then_some(token);
+
         let resp = Request::post("/api/login")
             .json(&LoginReq {
                 email: email.to_string(),
                 passhash,
+                turnstile_token,
             })
             .map_err(|e| format!("serialise error: {e}"))?
             .send()
@@ -212,13 +237,21 @@ mod client {
         struct RegisterReq {
             email: String,
             passhash: String,
+            turnstile_token: Option<String>,
         }
 
         let passhash = hash_client(password.as_bytes(), email)
             .map_err(|e| format!("hash error: {e}"))?;
 
+        let token = turnstile_token();
+        let turnstile_token = (!token.is_empty()).then_some(token);
+
         let resp = Request::post("/api/register")
-            .json(&RegisterReq { email: email.to_string(), passhash })
+            .json(&RegisterReq {
+                email: email.to_string(),
+                passhash,
+                turnstile_token,
+            })
             .map_err(|e| format!("serialise error: {e}"))?
             .send()
             .await
@@ -1206,11 +1239,22 @@ fn AuthPage() -> impl IntoView {
     let (reset_code, set_reset_code) = signal(String::new());
     let (reset_password, set_reset_password) = signal(String::new());
     let (success_msg, set_success_msg) = signal(String::new());
+    let (turnstile_key, set_turnstile_key) = signal(String::new());
 
     Effect::new(move |_: Option<()>| {
         #[cfg(feature = "hydrate")]
-        if client::get_token().is_some() {
-            client::navigate_to("/");
+        {
+            if client::get_token().is_some() {
+                client::navigate_to("/");
+            }
+            set_turnstile_key.set(client::turnstile_sitekey());
+            if !turnstile_key.get().is_empty() {
+                leptos::task::spawn_local(async {
+                    let _ = js_sys::eval(
+                        "try{turnstile.render('.cf-turnstile')}catch(e){}",
+                    );
+                });
+            }
         }
     });
 
@@ -1344,6 +1388,10 @@ fn AuthPage() -> impl IntoView {
                         <p class="submit-error" role="alert">
                             {move || error_msg.get()}
                         </p>
+                    </Show>
+
+                    <Show when=move || !turnstile_key.get().is_empty()>
+                        <div class="cf-turnstile" data-sitekey=move || turnstile_key.get() data-callback="onTurnstileToken"></div>
                     </Show>
 
                     <button

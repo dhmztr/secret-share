@@ -1,21 +1,25 @@
 use crate::AppState;
-use auth::{login_user, register_user, verify_token, SmtpConfig, send_verification_email, generate_code};
+use auth::{
+    SmtpConfig, generate_code, login_user, register_user, send_verification_email, verify_token,
+};
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use chrono::{DateTime, Utc};
 use crypto::{Envelope, authenticate, hash_password};
-use db::{SecretErrors, UsersErrors, redis_process_quota, set_verified, is_verified, store_verify_code, check_verify_code, store_reset_code, check_reset_code, update_password, VerifyOutcome};
 use db::{
-    SecretLink, increment_and_return, insert_secret, select_metadata,
-    select_secret_password,
+    SecretErrors, UsersErrors, VerifyOutcome, check_reset_code, check_verify_code, is_verified,
+    redis_process_quota, set_verified, store_reset_code, store_verify_code, update_password,
 };
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use db::{
+    SecretLink, increment_and_return, insert_secret, select_metadata, select_secret_password,
+};
 use redis::aio::MultiplexedConnection;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+use uuid::Uuid;
 
 // blocklist source: github.com/disposable-email-domains/disposable-email-domains
 static DISPOSABLE_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -80,46 +84,61 @@ pub async fn encrypt_data(
     State(state): State<AppState>,
     Json(req): Json<CreateSecretReq>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
-    if let Ok(useremail) = verify_token(req.token).await {
-        match is_verified(&state.postgres, &useremail).await {
-            Ok(true) => {}
-            Ok(false) => return Err((StatusCode::FORBIDDEN, "Email not verified".to_owned())),
-            Err(db::UsersErrors::DoesntExist) => return Err((StatusCode::UNAUTHORIZED, "user not found".to_owned())),
-            Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "verification check failed".to_owned())),
+    let useremail = match verify_token(req.token).await {
+        Ok(email) => email,
+        Err(UsersErrors::Expired) => {
+            return Err((StatusCode::UNAUTHORIZED, "token expired".to_string()));
         }
-        if req.max_views < 1 || req.max_views > 1000 {
-            return Err((StatusCode::BAD_REQUEST, "max_views must be between 1 and 1000".to_string()));
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, "Verification failed".to_string())),
+    };
+    match is_verified(&state.postgres, &useremail).await {
+        Ok(true) => {}
+        Ok(false) => return Err((StatusCode::FORBIDDEN, "Email not verified".to_owned())),
+        Err(db::UsersErrors::DoesntExist) => {
+            return Err((StatusCode::UNAUTHORIZED, "user not found".to_owned()));
         }
-        let now = Utc::now();
-        if req.expires_at <= now || req.expires_at > now + chrono::Duration::days(365) {
-            return Err((StatusCode::BAD_REQUEST, "expires_at must be in the future and within 365 days".to_string()));
-        }
-        if req.env.nonce.len() != 12 {
-            return Err((StatusCode::BAD_REQUEST, "invalid nonce".to_string()));
-        }
-        if let Ok(amount_left) = redis_process_quota(state.redis, &state.postgres, &useremail).await
-        {
-            if amount_left >= 0 {
-                let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
-                let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "database error".to_string(),
-                    )
-                })?;
-
-                Ok(Json(id))
-            } else {
-                Err((StatusCode::UNAUTHORIZED, "No quota left :(".to_owned()))
-            }
-        } else {
-            Err((
+        Err(_) => {
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to fetch remaining quota".to_owned(),
-            ))
+                "verification check failed".to_owned(),
+            ));
+        }
+    }
+    if req.max_views < 1 || req.max_views > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_views must be between 1 and 1000".to_string(),
+        ));
+    }
+    let now = Utc::now();
+    if req.expires_at <= now || req.expires_at > now + chrono::Duration::days(365) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "expires_at must be in the future and within 365 days".to_string(),
+        ));
+    }
+    if req.env.nonce.len() != 12 {
+        return Err((StatusCode::BAD_REQUEST, "invalid nonce".to_string()));
+    }
+    if let Ok(amount_left) = redis_process_quota(state.redis, &state.postgres, &useremail).await {
+        if amount_left >= 0 {
+            let secret = SecretLink::new(req.env, req.max_views, req.expires_at);
+            let id = insert_secret(&state.postgres, secret).await.map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "database error".to_string(),
+                )
+            })?;
+
+            Ok(Json(id))
+        } else {
+            Err((StatusCode::UNAUTHORIZED, "No quota left :(".to_owned()))
         }
     } else {
-        Err((StatusCode::UNAUTHORIZED, "Verification failed".to_owned()))
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to fetch remaining quota".to_owned(),
+        ))
     }
 }
 
@@ -216,12 +235,14 @@ pub struct ResendReq {
 pub struct LoginReq {
     pub email: String,
     pub passhash: String,
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct RegisterReq {
     pub email: String,
     pub passhash: String,
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -272,6 +293,54 @@ fn validate_email(email: &str) -> Result<(), (StatusCode, String)> {
     Ok(())
 }
 
+async fn verify_turnstile(
+    headers: &HeaderMap,
+    token: &Option<String>,
+) -> Result<(), (StatusCode, String)> {
+    let secret = match std::env::var("TURNSTILE_SECRET") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return Ok(()),
+    };
+
+    if let Ok(bypass) = std::env::var("CLI_BYPASS_TOKEN") {
+        if !bypass.is_empty() {
+            if let Some(h) = headers
+                .get("X-Turnstile-Bypass")
+                .and_then(|v| v.to_str().ok())
+            {
+                if h == bypass {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let token_str = token
+        .as_deref()
+        .ok_or((StatusCode::FORBIDDEN, "captcha required".to_string()))?;
+
+    #[derive(serde::Deserialize)]
+    struct SiteverifyResp {
+        success: bool,
+    }
+
+    let sv = reqwest::Client::new()
+        .post("https://challenges.cloudflare.com/turnstile/v0/siteverify")
+        .form(&[("secret", secret.as_str()), ("response", token_str)])
+        .send()
+        .await
+        .map_err(|_| (StatusCode::BAD_GATEWAY, "captcha check failed".to_string()))?
+        .json::<SiteverifyResp>()
+        .await
+        .map_err(|_| (StatusCode::BAD_GATEWAY, "captcha check failed".to_string()))?;
+
+    if sv.success {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, "captcha failed".to_string()))
+    }
+}
+
 fn spawn_verification_email(redis: MultiplexedConnection, email: String) {
     tokio::spawn(async move {
         let code = generate_code();
@@ -310,8 +379,10 @@ fn spawn_reset_email(redis: MultiplexedConnection, email: String) {
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
+    verify_turnstile(&headers, &req.turnstile_token).await?;
     validate_email(&req.email)?;
     match login_user(&state.postgres, &req.email, &req.passhash).await {
         Ok(token) => Ok((StatusCode::OK, token)),
@@ -319,14 +390,16 @@ pub async fn login(
             spawn_reset_email(state.redis.clone(), req.email.clone());
             Err((StatusCode::UPGRADE_REQUIRED, "Your account predates a security update. We emailed you a reset code — use it to set a new password.".to_owned()))
         }
-        Err(_) => Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned()))
+        Err(_) => Err((StatusCode::UNAUTHORIZED, "Failed to login user".to_owned())),
     }
 }
 
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<RegisterReq>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
+    verify_turnstile(&headers, &req.turnstile_token).await?;
     validate_email(&req.email)?;
     let stored = hash_password(req.passhash.as_bytes())
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "hash error".to_string()))?;
@@ -368,9 +441,10 @@ pub async fn verify(
         Ok(VerifyOutcome::WrongCode) => {
             Err((StatusCode::UNAUTHORIZED, "Incorrect code".to_owned()))
         }
-        Ok(VerifyOutcome::TooManyAttempts) => {
-            Err((StatusCode::TOO_MANY_REQUESTS, "Too many attempts".to_owned()))
-        }
+        Ok(VerifyOutcome::TooManyAttempts) => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts".to_owned(),
+        )),
         Ok(VerifyOutcome::Expired) => Err((StatusCode::GONE, "Code expired".to_owned())),
         Err(_) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -390,7 +464,12 @@ pub async fn resend_code(
         }
         Ok(true) => {}
         Err(UsersErrors::DoesntExist) => {}
-        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_owned(),
+            ));
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -405,7 +484,12 @@ pub async fn password_reset_request(
             spawn_reset_email(state.redis.clone(), req.email.clone());
         }
         Err(UsersErrors::DoesntExist) => {}
-        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_owned())),
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error".to_owned(),
+            ));
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -424,20 +508,23 @@ pub async fn password_reset_confirm(
                 .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "hash error".to_string()))?;
             update_password(&state.postgres, &req.email, &stored)
                 .await
-                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "update failed".to_string()))?;
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "update failed".to_string(),
+                    )
+                })?;
             Ok(StatusCode::NO_CONTENT)
         }
         Ok(VerifyOutcome::WrongCode) => {
             Err((StatusCode::UNAUTHORIZED, "Incorrect code".to_owned()))
         }
-        Ok(VerifyOutcome::TooManyAttempts) => {
-            Err((StatusCode::TOO_MANY_REQUESTS, "Too many attempts".to_owned()))
-        }
-        Ok(VerifyOutcome::Expired) => Err((StatusCode::GONE, "Code expired".to_owned())),
-        Err(_) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "reset failed".to_owned(),
+        Ok(VerifyOutcome::TooManyAttempts) => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts".to_owned(),
         )),
+        Ok(VerifyOutcome::Expired) => Err((StatusCode::GONE, "Code expired".to_owned())),
+        Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "reset failed".to_owned())),
     }
 }
 
