@@ -121,6 +121,12 @@ pub async fn encrypt_data(
     if req.env.nonce.len() != 12 {
         return Err((StatusCode::BAD_REQUEST, "invalid nonce".to_string()));
     }
+    if req.env.ciphertext.len() > 25 * 1024 * 1024 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "content too large (max 25MB)".to_string(),
+        ));
+    }
     if let Ok(amount_left) = redis_process_quota(state.redis, &state.postgres, &useremail).await {
         if amount_left >= 0 {
             let secret = SecretLink::new(req.env, req.max_views, req.expires_at);

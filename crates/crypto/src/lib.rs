@@ -21,8 +21,39 @@ pub enum ContentType {
 const TAG_TEXT: u8 = 0x01;
 const TAG_FILE: u8 = 0x02;
 
+// gzip the TLV only if it shrinks it (already-compressed data stays raw).
+// TAG_TEXT/TAG_FILE (0x01/0x02) never collide with the gzip magic 0x1f 0x8b,
+// so unwrap can tell compressed from raw and stay backward-compatible.
+fn maybe_compress(tlv: Vec<u8>) -> Vec<u8> {
+    use flate2::{Compression, write::GzEncoder};
+    use std::io::Write;
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    if enc.write_all(&tlv).is_ok() {
+        if let Ok(gz) = enc.finish() {
+            if gz.len() < tlv.len() {
+                return gz;
+            }
+        }
+    }
+    tlv
+}
+
+fn maybe_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut dec = GzDecoder::new(data);
+        let mut out = Vec::new();
+        dec.read_to_end(&mut out)
+            .map_err(|_| "decompression failed".to_string())?;
+        Ok(out)
+    } else {
+        Ok(data.to_vec())
+    }
+}
+
 pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
-    match kind {
+    let tlv = match kind {
         ContentType::Text => {
             let mut out = Vec::with_capacity(1 + 2 + data.len());
             out.push(TAG_TEXT);
@@ -31,26 +62,28 @@ pub fn wrap_payload(kind: &ContentType, data: &[u8]) -> Vec<u8> {
             out.extend_from_slice(&(0u16).to_be_bytes());
             out.extend_from_slice(data);
             out
-
         }
-    ContentType::File {name,mime} => {
+        ContentType::File { name, mime } => {
             let name_bytes = name.as_bytes();
             let mime_bytes = mime.as_bytes();
             let name_len = name_bytes.len() as u16;
-            let mime_len= mime_bytes.len() as u16;
+            let mime_len = mime_bytes.len() as u16;
             let mut out = Vec::with_capacity(1 + 2 + name_bytes.len() + 2 + mime_bytes.len() + data.len());
             out.push(TAG_FILE);
             out.extend_from_slice(&name_len.to_be_bytes());
             out.extend_from_slice(name_bytes);
             out.extend_from_slice(&mime_len.to_be_bytes());
-            out.extend_from_slice(mime_bytes );
+            out.extend_from_slice(mime_bytes);
             out.extend_from_slice(data);
             out
         }
-    }
+    };
+    maybe_compress(tlv)
 }
 
 pub fn unwrap_payload(data: &[u8]) -> Result<(ContentType, Vec<u8>), String> {
+     let data = maybe_decompress(data)?;
+     let data = data.as_slice();
      if data.is_empty() {
          return Err("payload too short".to_string());
      }

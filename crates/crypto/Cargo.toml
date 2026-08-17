@@ -9,6 +9,8 @@ argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
 serde  = { version = "1.0", features = ["derive"] }
 sha2   = "0.10"
+# pure-Rust deflate backend (miniz_oxide) so it compiles to WASM
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # Needed so OsRng / SaltString::generate work inside the browser WASM sandbox.
 # On native targets getrandom already uses the OS entropy source; the "js"
