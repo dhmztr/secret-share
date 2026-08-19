@@ -17,6 +17,8 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
       - SMTP_FROM=${SMTP_FROM}
+      - TURNSTILE_SECRET=${TURNSTILE_SECRET}
+      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY}
     depends_on:
       postgres:
         condition: service_healthy
