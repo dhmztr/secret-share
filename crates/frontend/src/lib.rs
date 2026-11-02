@@ -1245,10 +1245,24 @@ fn AuthPage() -> impl IntoView {
                 client::navigate_to("/");
             }
             set_turnstile_key.set(client::turnstile_sitekey());
-            if !turnstile_key.get().is_empty() {
+        }
+    });
+
+    Effect::new(move |_: Option<()>| {
+        #[cfg(feature = "hydrate")]
+        {
+            let should_render = mode.get() == AuthMode::Register && !turnstile_key.get().is_empty();
+            if should_render {
                 leptos::task::spawn_local(async {
                     let _ = js_sys::eval(
-                        "try{turnstile.render('.cf-turnstile')}catch(e){}",
+                        r#"(function tryRenderTurnstile(attemptsLeft) {
+                            var el = document.querySelector('.cf-turnstile');
+                            if (window.turnstile && el && !el.hasChildNodes()) {
+                                try { turnstile.render(el); } catch (e) {}
+                            } else if (attemptsLeft > 0) {
+                                setTimeout(function() { tryRenderTurnstile(attemptsLeft - 1); }, 100);
+                            }
+                        })(30);"#,
                     );
                 });
             }
